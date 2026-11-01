@@ -9,9 +9,11 @@ import {
   Clapperboard,
   ImagePlus,
   MessageCircle,
+  Music2,
   Play,
   Plus,
   Sparkles,
+  StickyNote,
   Users,
 } from "lucide-react";
 import { Avatar } from "@/components/Avatar";
@@ -20,8 +22,11 @@ import { AuthedImage } from "@/components/Media";
 import { Modal } from "@/components/Modal";
 import { PageHeader } from "@/components/Page";
 import { EmptyState, ErrorState } from "@/components/States";
+import { VerifiedTick } from "@/components/Tick";
 import { DropCard } from "@/features/drops/DropCard";
 import { DropComposer, type ComposerMode } from "@/features/drops/DropComposer";
+import { EditDrop } from "@/features/drops/EditDrop";
+import { SensitiveVeil } from "@/features/drops/SensitiveVeil";
 import { VibeViewer } from "@/features/drops/VibeViewer";
 import { api, apiPathFrom } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -174,11 +179,15 @@ function SectionHead({
   action?: string;
   onAction?: () => void;
 }) {
+  // `_Head` in `screens/drops.dart`: 16 all round but 8 under, the word at 15
+  // w800 with a hair of negative tracking, and the action at 13 w700 in the
+  // accent — the same head the Moments rail wears, because it is the same kind
+  // of section.
   return (
-    <div className="flex items-center justify-between px-1 pb-2 pt-3">
-      <h2 id={id} className="text-[15px] font-extrabold tracking-[-0.02em]">{title}</h2>
+    <div className="flex items-center justify-between pb-2 pe-4 ps-4 pt-4">
+      <h2 id={id} className="text-[15px] font-extrabold tracking-[-0.2px]">{title}</h2>
       {action ? (
-        <button type="button" onClick={onAction} className="text-[12px] font-bold text-accent hover:underline">
+        <button type="button" onClick={onAction} className="text-[13px] font-bold text-accent hover:underline">
           {action}
         </button>
       ) : null}
@@ -186,26 +195,99 @@ function SectionHead({
   );
 }
 
+/**
+ * A small filled capsule with an icon and a number on it — `_Pill` in
+ * `screens/drops.dart`.
+ *
+ * 62% of the theme's solid ink, which is the same dark in every theme, because
+ * the pill sits over a picture and a white-on-white pill would vanish on the
+ * pale ones. `--solid` is that ink; `--ink` is the *text* colour and flips.
+ */
+function Pill({ icon, text }: { icon: ReactNode; text: string }) {
+  return (
+    <span className="inline-flex items-center gap-[4px] rounded-[20px] bg-[color-mix(in_srgb,var(--solid)_62%,transparent)] px-[7px] py-[3px] text-[11px] font-extrabold leading-[15px] text-white">
+      {icon}
+      {text}
+    </span>
+  );
+}
+
+/**
+ * One clip on the shelf, drawn as a story card: the frame, whose it is in the
+ * corner, how many have watched, and the name under it — `VibeCard` in
+ * `screens/drops.dart`.
+ *
+ * The tile is 89×132, three points bigger than the Moments rail's own tile in
+ * both directions: the same card in the same kind of row, given a touch more
+ * presence because it sits inside a page that scrolls the other way. The face
+ * is in the top corner at 3 and the watchers at the foot at 5, and the two are
+ * the only things over the frame — a Vibe is watched, and how often is half of
+ * what somebody scanning a rail is deciding between.
+ *
+ * A tile with no still is two answers, and they are not the same one. A clip
+ * whose bytes are on the server but which the phone cut no poster for is a
+ * blank to wait on — it plays when the tile is opened — while a clip whose
+ * bytes have gone has neither a still nor a content URL, and only that one is
+ * drawn as gone.
+ */
 function VibeCard({ vibe, onOpen }: { vibe: Drop; onOpen: () => void }) {
   const firstName = (vibe.author.name || vibe.author.username || "").split(" ")[0];
+  const still = vibe.asset?.thumbnail_url ?? null;
+  const others = Number(vibe.collab?.count ?? 0);
 
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="group w-[86px] shrink-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+      className="group w-[89px] shrink-0 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       aria-label={`${vibe.author.name || vibe.author.username}'s Vibe, ${count(vibe.views ?? 0)} views`}
     >
-      <span className="relative block h-[129px] w-full overflow-hidden rounded-[14px] bg-[color-mix(in_srgb,var(--accent)_10%,var(--card))]">
-        <AuthedImage src={vibe.asset?.thumbnail_url ?? null} alt={`${firstName}'s Vibe`} className="h-full w-full transition duration-200 group-hover:scale-[1.03]" />
-        <span className="absolute left-1.5 top-1.5 rounded-full bg-card p-[1.5px]">
+      {/* The tile is the picture and nothing else, so the cover is the whole of
+          it: the veil is handed the clip's own thumbnail to blur behind its
+          panel rather than a frame of the clip, because a rail is scanned. */}
+      <span className="relative block h-[132px] w-[89px] overflow-hidden rounded-[14px] bg-[color-mix(in_srgb,var(--accent)_10%,var(--card))]">
+        <SensitiveVeil
+          sensitive={Boolean(vibe.sensitive)}
+          openable={Boolean(vibe.openable)}
+          cover={vibe.asset ?? null}
+          note={vibe.mine ? "Yours. Everybody else sees it covered." : null}
+        >
+          {still ? (
+            <AuthedImage
+              src={still}
+              alt={`${firstName}'s Vibe`}
+              className="block size-full transition duration-200 group-hover:scale-[1.03]"
+            />
+          ) : vibe.asset?.content_url ? (
+            // The clip is on the server and the phone cut no poster: a blank to
+            // wait on, never the tombstone.
+            <span className="block size-full" />
+          ) : (
+            <span className="flex size-full items-center justify-center p-2 text-center text-[10.5px] font-semibold text-dim">
+              It is gone
+            </span>
+          )}
+        </SensitiveVeil>
+
+        <span className="absolute start-[3px] top-[3px] rounded-full bg-card p-[1.5px]">
           <Avatar user={vibe.author} size={26} />
         </span>
-        <span className="absolute bottom-1.5 left-1.5 inline-flex items-center gap-1 rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] font-extrabold text-white backdrop-blur">
-          <Play className="size-3 fill-current" /> {count(vibe.views ?? 0)}
+        <span className="absolute bottom-[5px] start-[5px]">
+          <Pill icon={<Play className="size-3 fill-current" aria-hidden />} text={count(vibe.views ?? 0)} />
         </span>
+        {/* The other names, as a count and nothing more: the tile is 89 wide
+            and a name on the same line would be an ellipsis. The word for it
+            is on the card this opens. */}
+        {others > 1 ? (
+          <span className="absolute bottom-[5px] end-[5px]">
+            <Pill icon={<Users className="size-3" aria-hidden />} text={count(others)} />
+          </span>
+        ) : null}
       </span>
-      <span className="mt-1.5 block truncate text-[11.5px] text-ink">{firstName}</span>
+      <span className="mt-[6px] flex items-center gap-[2px]">
+        <span className="truncate text-[11.5px] text-ink">{firstName}</span>
+        {vibe.author.verified ? <VerifiedTick size={11} /> : null}
+      </span>
     </button>
   );
 }
@@ -246,7 +328,10 @@ export function DropsPage() {
   const [vibeIndex, setVibeIndex] = useState<number | null>(null);
   const composing = params.get("compose") === "1";
   const modeParam = params.get("mode");
-  const composerMode: ComposerMode = modeParam === "vibe" || modeParam === "poll" ? modeParam : "drop";
+  const composerMode: ComposerMode =
+    modeParam === "vibe" || modeParam === "poll" || modeParam === "note" || modeParam === "sound"
+      ? modeParam
+      : "drop";
 
   const feed = useInfiniteQuery({
     queryKey: ["drops", "feed"],
@@ -255,13 +340,27 @@ export function DropsPage() {
     getNextPageParam: (last) => apiPathFrom(last.next),
   });
 
-  const vibes = useQuery({
+  // The shelf is dealt a page at a time and the walk keeps asking while it is
+  // being read — `Drops.vibeBatch` ahead, in the app. The first page is a
+  // hand of thirty and the walk is not supposed to end there: a thumb with
+  // nothing after it is the app's own complaint about a shelf that stopped.
+  const vibes = useInfiniteQuery({
     queryKey: ["drops", "vibes"],
-    queryFn: () => api.get<Page<Drop>>("/drops/vibes/"),
+    queryFn: ({ pageParam }) => api.get<Page<Drop>>(pageParam),
+    initialPageParam: "/drops/vibes/",
+    getNextPageParam: (last) => apiPathFrom(last.next),
     staleTime: 30_000,
   });
-  const vibeRows = useMemo(() => vibes.data?.results ?? [], [vibes.data]);
+  const vibeRows = useMemo(
+    () => (vibes.data?.pages ?? []).flatMap((page) => page.results),
+    [vibes.data],
+  );
   const vibeParam = params.get("vibe");
+  // A card's ⋮ offers Update on its own author's post, and the app opens its
+  // composer in edit mode with that post loaded. Here the post is already in
+  // hand — it is the card that was tapped — so the modal takes it directly and
+  // only a deep link has to read one.
+  const editId = params.get("edit");
 
   useEffect(() => {
     if (!vibeParam || !vibeRows.length) return;
@@ -336,7 +435,7 @@ export function DropsPage() {
           {vibeRows.length ? (
             <section aria-labelledby="drops-vibe-heading">
               <SectionHead id="drops-vibe-heading" title="Vibe" action="See all" onAction={() => setVibeIndex(0)} />
-              <div className="no-scrollbar flex gap-3 overflow-x-auto px-1 pb-1">
+              <div className="no-scrollbar flex gap-3 overflow-x-auto px-4 pb-1">
                 {vibeRows.map((vibe, index) => (
                   <VibeCard key={vibe.id} vibe={vibe} onOpen={() => setVibeIndex(index)} />
                 ))}
@@ -421,10 +520,19 @@ export function DropsPage() {
           <CreateRow
             icon={<ImagePlus className="size-4" />}
             label="Drop"
-            line="Photo, video, sound or text"
+            line="Pictures, in a run"
             onClick={() => {
               setCreateOpen(false);
               openComposer("drop");
+            }}
+          />
+          <CreateRow
+            icon={<StickyNote className="size-4" />}
+            label="Note"
+            line="Words and nothing else"
+            onClick={() => {
+              setCreateOpen(false);
+              openComposer("note");
             }}
           />
           <CreateRow
@@ -434,6 +542,15 @@ export function DropsPage() {
             onClick={() => {
               setCreateOpen(false);
               openComposer("vibe");
+            }}
+          />
+          <CreateRow
+            icon={<Music2 className="size-4" />}
+            label="Sound"
+            line="A recording, on its own shelf"
+            onClick={() => {
+              setCreateOpen(false);
+              openComposer("sound");
             }}
           />
           <CreateRow
@@ -457,6 +574,26 @@ export function DropsPage() {
         </div>
       </Modal>
 
+      <EditDrop
+        drop={editId ? drops.find((row) => String(row.id) === editId) ?? null : null}
+        dropId={editId ?? undefined}
+        open={Boolean(editId)}
+        onClose={() => {
+          setParams(
+            (current) => {
+              const copy = new URLSearchParams(current);
+              copy.delete("edit");
+              return copy;
+            },
+            { replace: true },
+          );
+        }}
+        onSaved={() => {
+          void queryClient.invalidateQueries({ queryKey: ["drops"] });
+          void queryClient.invalidateQueries({ queryKey: ["drop"] });
+        }}
+      />
+
       <DropComposer
         open={composing}
         mode={composerMode}
@@ -472,6 +609,18 @@ export function DropsPage() {
           index={Math.min(vibeIndex, vibeRows.length - 1)}
           onIndex={setVibeIndex}
           onClose={closeVibe}
+          // A thumb nearing the end of the hand it was dealt asks for the next
+          // one, which is `Drops.vibeBatch` in the app: the walk never runs out
+          // while the shelf has more.
+          onNeedMore={() => {
+            if (vibes.hasNextPage && !vibes.isFetchingNextPage) void vibes.fetchNextPage();
+          }}
+          // The bar's camera: the reel is where a clip is watched, so it is
+          // also one of the two ways another one is put up.
+          onRecord={() => {
+            closeVibe();
+            openComposer("vibe");
+          }}
         />
       ) : null}
     </div>

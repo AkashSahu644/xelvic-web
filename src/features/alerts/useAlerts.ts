@@ -9,7 +9,14 @@ function frameData(frame: SocketFrame): Record<string, unknown> {
   return frame.data && typeof frame.data === "object" ? (frame.data as Record<string, unknown>) : {};
 }
 
-function normaliseAlert(raw: unknown): Alert | null {
+/**
+ * One alert off the wire, in the shape the row is drawn from.
+ *
+ * Exported because the in-app banner and the background tab's system
+ * notification read the same `alert.new` frame this list reads, and a frame
+ * parsed two ways is two drawings of one row that can disagree.
+ */
+export function normaliseAlert(raw: unknown): Alert | null {
   if (!raw || typeof raw !== "object") return null;
   const row = raw as Partial<Alert> & { id?: unknown; kind?: unknown };
   if (!row.id || !row.kind) return null;
@@ -25,6 +32,10 @@ function normaliseAlert(raw: unknown): Alert | null {
     actor: row.actor ?? null,
     target: row.target ?? null,
     preview: row.preview ?? null,
+    // The shelf's own link, carried through untouched. A frame can name a route
+    // the list row then opens; dropping it here is how a `studio` alert would
+    // arrive live with nowhere to go.
+    route: typeof row.route === "string" ? row.route : "",
   };
 }
 

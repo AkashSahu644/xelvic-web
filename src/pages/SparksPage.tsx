@@ -1,274 +1,520 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, Coins, Flame, Medal, Palette, Shield, Sparkles, Trophy, Wallet as WalletIcon } from "lucide-react";
+import {
+  Bolt,
+  ChevronRight,
+  MinusCircle,
+  TrendingUp,
+  Trophy,
+  UserPlus,
+} from "lucide-react";
 import { Avatar } from "@/components/Avatar";
-import { EmptyState, ErrorState, PageSkeleton } from "@/components/States";
-import { ThemeShop } from "@/features/sparks/ThemeShop";
-import type { WalletData } from "@/features/sparks/types";
+import { Button } from "@/components/Button";
+import { PageHeader } from "@/components/Page";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { count, relativeTime } from "@/lib/format";
-import { useTheme } from "@/providers/ThemeProvider";
-import type { Medal as MedalRow, Spark, SparkTier, Wallet } from "@/types/api";
+import { count, plural } from "@/lib/format";
+import { errorMessage } from "@/lib/errors";
+import { API_ORIGIN } from "@/lib/env";import { marketKeys } from "@/features/marketplace/queries";
+import { useAuth } from "@/providers/AuthProvider";
+import { usePreferences } from "@/providers/PreferencesProvider";
+import { useToast } from "@/providers/ToastProvider";
+import type { WalletData, WalletEntry, WalletPerson } from "@/features/sparks/types";
+import type { Spark } from "@/types/api";
 
-interface SparksCatalog {
-  tiers: SparkTier[];
-  shield_max: number;
-  century: number;
-  warn_seconds: number;
-}
+/**
+ * The wallet: every day ever earned, every spark ever spent, and who the days
+ * came from.
+ *
+ * Ported from `app/lib/screens/wallet_view.dart` (the body) and
+ * `app/lib/screens/reward.dart` (the page it stands in). It was a "Sparks"
+ * dashboard here until now — four tabs of the web's own invention, drawing the
+ * ladder, the medals and a streaks list that the app keeps on *other* screens.
+ * None of that was wrong, but none of it was this page: the app's wallet is one
+ * page about one number, and the app's catalogue, medals and streaks are
+ * reached elsewhere. So this is that page.
+ *
+ * It is one wallet for everybody and not a jar per conversation — the owner's
+ * words: *"sab ka sparks(streak) ka wallet alag alag nahi rahega sab mila kar
+ * kar"*. Every conversation-day earned with anybody at all lands in the same
+ * ledger, and this page adds them up and then opens them out again by person,
+ * which is the whole reason the ledger keeps the conversation on every line.
+ *
+ * **Three numbers are shown and they are three different questions.** *Alive
+ * now* is the runs going right now and it falls when one breaks. *Ever earned*
+ * is every conversation-day ever credited and only ever goes up; it is what the
+ * themes are unlocked by, because a purchase must not take back the rung it was
+ * made on. *Balance* is what is left of it after the themes that were bought,
+ * and it is the one a price is read against. All three are the same number
+ * until the first run breaks or the first theme is bought — and then they are
+ * not, and somebody is going to wonder which one is lying. None of them is.
+ */
 
+/**
+ * The whole shelf's own reading of the purse, shared with the marketplace.
+ *
+ * The three figures at the top come off `/sparks/` and not off the wallet book,
+ * which is the app's division: a purchase happens one screen away in the
+ * Marketplace and what it changes is a line in the ledger, so the marketplace's
+ * `refreshShelves` already invalidates this key after every buy — the balance
+ * here moves without a request, exactly as the app's `_watchSparks` moves it.
+ */
 interface SparksData {
   sparks: Spark[];
   total: number;
-  wallet: Wallet;
-  catalog: SparksCatalog;
+  wallet: { balance: number; earned: number; spent: number; owned: string[]; owned_logos?: string[] };
+  catalog?: unknown;
 }
 
-type Tab = "themes" | "wallet" | "streaks" | "ladder" | "medals";
-
-const TONES: Record<string, string> = {
-  amber: "#E5A11A",
-  rose: "#E8558A",
-  magenta: "#D02B9A",
-  violet: "#8B5CF6",
-  cyan: "#0891B2",
-  mint: "#2FB47C",
-  gold: "#C99312",
-};
-
-function tone(tier?: SparkTier | null) {
-  return TONES[tier?.colour || ""] || "var(--accent)";
+interface ReferralAnswer {
+  code: string;
+  reward: number;
+  enabled: boolean;
+  invited: number;
+  earned: number;
 }
 
-function SparkCard({ spark }: { spark: Spark }) {
-  const person = spark.other;
-  const pct = Math.max(0, Math.min(100, Math.round((spark.pct ?? 0) * 100)));
-  const colour = tone(spark.stage);
+/** One explanation row: the three numbers, said out loud so nobody has to guess. */
+function Explain({ label, value, line }: { label: string; value: number; line: string }) {
   return (
-    <div className="rounded-[18px] border border-line bg-card p-3.5">
-      <div className="flex items-start gap-3">
-        <Link to={person ? `/app/u/${person.username}` : "/app/convo"} className="shrink-0"><Avatar user={person} size={44} /></Link>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <Link to={person ? `/app/u/${person.username}` : "/app/convo"} className="block truncate text-[12px] font-extrabold hover:underline">{person?.name || person?.username || "A convo"}</Link>
-              <p className="text-[10px] text-dim">
-                {spark.count ? `${count(spark.count)} days` : "No live run"}
-                {spark.best ? ` · best ${count(spark.best)}` : ""}
-                {spark.note ? ` · ${spark.note}` : ""}
-              </p>
-            </div>
-            {spark.stage ? (
-              <span className="shrink-0 rounded-full px-2 py-1 text-[9px] font-extrabold uppercase tracking-wider" style={{ color: colour, backgroundColor: `color-mix(in srgb, ${colour} 13%, transparent)` }}>
-                {spark.stage.name}
-              </span>
-            ) : null}
-          </div>
+    <div className="flex items-start">
+      {/* The label column is a minimum, not a width: "Earned" fits 76, and the
+          Arabic and Hindi words for it are longer. It wraps rather than being
+          cut, and the figure and its line take what is left. */}
+      <span className="min-w-[76px] max-w-[120px] shrink-0 text-[11.5px] font-semibold text-dim">
+        {label}
+      </span>
+      <span className="w-[42px] shrink-0 text-[16px] font-extrabold tabular-nums">{count(value)}</span>
+      <span className="min-w-0 flex-1 text-[11px] leading-[1.4] text-dim">{line}</span>
+    </div>
+  );
+}
 
-          <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-[color-mix(in_srgb,var(--ink)_7%,transparent)]">
-            <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: colour }} />
-          </div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[9px] text-dim">
-            {spark.next_stage ? <span>{spark.days_left === 1 ? "1 day" : `${spark.days_left ?? 0} days`} to {spark.next_stage.name}</span> : <span>Century kept</span>}
-            {spark.shields ? <span className="flex items-center gap-0.5"><Shield className="size-2.5" />{spark.shields}/{spark.shield_cap ?? 5}</span> : null}
-            {spark.closing ? <span className="font-bold text-[var(--bad)]">The day is nearly gone</span> : spark.at_risk ? <span className="font-bold text-[var(--bad)]">Say something today</span> : spark.done ? <span className="font-bold text-[var(--good)]">Today is counted</span> : null}
-            {spark.laps ? <span className="flex items-center gap-0.5"><Trophy className="size-2.5" />{spark.laps} kept</span> : null}
-          </div>
-        </div>
-      </div>
-      <div className="mt-2.5 flex justify-end">
-        <Link to={spark.thread_id ? `/app/convo/${spark.thread_id}` : "/app/convo"} className="flex items-center gap-1 text-[10px] font-bold text-accent hover:underline">Open the convo <ArrowUpRight className="size-3" /></Link>
-      </div>
+/** A head above a list: small, dim, spaced out. `_head` in the app. */
+function Head({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
+  return (
+    <div className="flex items-center">
+      <span className="flex-1 text-[10.5px] font-bold tracking-[0.8px] text-dim">{children}</span>
+      {right}
     </div>
   );
 }
 
 export function SparksPage() {
-  const [tab, setTab] = useState<Tab>("themes");
-  const { setDesign } = useTheme();
+  const navigate = useNavigate();
+  const { t } = usePreferences();
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [tab, setTab] = useState<0 | 1>(0);
+  const [sharing, setSharing] = useState(false);
 
   const sparks = useQuery({
     queryKey: ["sparks"],
     queryFn: () => api.get<SparksData>("/sparks/"),
+    // The bolt beside a person on the People tab is a live run, and a run can
+    // end while the page is open — the app redraws on every spark answer, and
+    // its chat list already polls. Same cadence here.
     refetchInterval: 60_000,
   });
-  const wallet = useQuery({
-    queryKey: ["sparks-wallet"],
+
+  const book = useQuery({
+    queryKey: marketKeys.wallet,
     queryFn: () => api.get<WalletData>("/sparks/wallet/"),
-    enabled: tab === "wallet" || tab === "themes",
-  });
-  const medals = useQuery({
-    queryKey: ["sparks-medals"],
-    queryFn: () => api.get<{ medals: MedalRow[] }>("/sparks/medals/"),
-    enabled: tab === "medals",
   });
 
-  const data = sparks.data;
-  const catalog = data?.catalog;
-  const current = data?.sparks.reduce<Spark | null>((best, spark) => {
-    if (!spark.stage) return best;
-    if (!best) return spark;
-    return (spark.pos ?? 0) > (best.pos ?? 0) ? spark : best;
-  }, null)?.stage?.key;
-  const owned = data?.wallet.owned ?? [];
+  /**
+   * The share-to-win reward, read live so the invite card says the number
+   * rather than a guess. Best-effort: the card is still there and shareable
+   * without it, which is why a failure is left silent and the line says
+   * "sparks" with no number rather than a stale default.
+   */
+  const referral = useQuery({
+    queryKey: ["sparks-referral"],
+    queryFn: () => api.get<ReferralAnswer>("/auth/me/referral/"),
+    retry: false,
+  });
+
+  const balance = sparks.data?.wallet.balance ?? 0;
+  const earned = sparks.data?.wallet.earned ?? 0;
+  const spent = sparks.data?.wallet.spent ?? 0;
+  const alive = sparks.data?.total ?? 0;
+  const inviteReward = referral.data?.reward ?? 0;
+  const inviteEarned = referral.data?.earned ?? 0;
+
+  const people = book.data?.people ?? [];
+  const lines = book.data?.entries ?? [];
+
+  /** The live run with each thread, so a person's row can wear the same bolt the chat row does. */
+  const live = new Map<string, Spark>();
+  for (const spark of sparks.data?.sparks ?? []) {
+    const id = String(spark.thread_id ?? spark.thread ?? "");
+    if (id) live.set(id, spark);
+  }
+
+  /**
+   * The balance card's three lines, in the app's order and with its wording.
+   *
+   * A count of one takes its own word — "1 of them were a day two people talked
+   * on" is the kind of sentence a template produces and nobody writes — so each
+   * figure picks its own form before the sentence is assembled. The web's `t()`
+   * has no `{1}`, which is why the number goes in here.
+   */
+  const notes: string[] = [
+    t(`${count(earned)} of them were a day two people talked on.`),
+    ...(inviteEarned > 0 ? [t(`${count(inviteEarned)} more came from friends you invited.`)] : []),
+    spent === 0
+      ? t("None of them have been spent.")
+      : t(`${count(spent)} of them are gone, into themes.`),
+  ];
+
+  /** Share the invite link — the handle is the code, and only the inviter is paid. */
+  async function invite() {
+    if (sharing) return;
+    setSharing(true);
+    const handle = user?.username ?? "";
+    // The same link the phone mints: `Links.shareUrl(LinkKind.invite, handle)`
+    // is `$kBase/i/<handle>`, the API origin's own invite page. Using the web
+    // origin instead would mint a link the web app has no route for.
+    const link = handle ? `${API_ORIGIN}/i/${encodeURIComponent(handle)}` : API_ORIGIN;
+    const text = t(`Join me on Xelvic — I earn sparks when you do: ${link}`);
+    try {
+      // The web's nearest thing to the app's share sheet: the browser's own,
+      // where there is one, and the clipboard where there is not — which is the
+      // app's own fallback for a phone with nowhere to share into, so an invite
+      // is never simply lost.
+      if (typeof navigator.share === "function") {
+        await navigator.share({ title: t("Join me on Xelvic"), text });
+      } else {
+        await navigator.clipboard.writeText(text);
+        // The app's own words for this exact moment — `Str.contactsCopied`,
+        // which is what `shareOutOfApp` says on a phone with no sheet to open.
+        toast({ title: t("Copied to the clipboard instead."), tone: "success" });
+      }
+    } catch (error) {
+      // A cancelled share sheet throws, and it is not a failure worth a line.
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      // The one way this fails is a browser that will not let a page write to
+      // the clipboard, and the answer to that is the same sentence the rest of
+      // the web uses for it rather than a claim that the invite went out.
+      toast({ title: t("Copy the link from the address bar"), tone: "info" });
+      void error;
+    } finally {
+      setSharing(false);
+    }
+  }
 
   return (
     <div className="mx-auto w-full max-w-[760px] pb-[calc(100px+env(safe-area-inset-bottom,0px))] md:pb-16">
-      <header className="px-4 pt-4 md:pt-6">
-        <h1 className="flex items-center gap-2 text-[20px] font-extrabold tracking-tight"><Sparkles className="size-5 text-accent" /> Sparks</h1>
-        <p className="mt-0.5 text-[10px] text-dim">A day counted for every day you both speak.</p>
+      <PageHeader title={t("Wallet")} back />
 
-        <div className="relative mt-4 overflow-hidden rounded-[22px] border border-line bg-[color-mix(in_srgb,var(--accent)_10%,var(--card))] p-4">
-          <div className="absolute -right-5 -top-7 size-28 rounded-full bg-[var(--accent-soft)] blur-2xl" />
-          <div className="relative flex items-end justify-between gap-3">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-dim">Live days</p>
-              <p className="mt-0.5 text-[36px] font-extrabold leading-none tracking-tight">{data ? count(data.total) : "—"}</p>
-              <p className="mt-1 text-[10px] text-dim">{data?.sparks.length ?? 0} {(data?.sparks.length ?? 0) === 1 ? "spark" : "sparks"} alive right now</p>
-            </div>
-            <div className="rounded-[14px] bg-card/70 px-3 py-2 text-right backdrop-blur">
-              <p className="flex items-center justify-end gap-1 text-[9px] font-bold uppercase tracking-wider text-dim"><Coins className="size-3" /> Wallet</p>
-              <p className="text-[20px] font-extrabold tabular-nums">{data ? count(data.wallet.balance) : "—"}</p>
-            </div>
+      <div className="px-4 pt-1">
+        {/* ---- the balance, with what it is not said underneath ------------ */}
+        <div className="rounded-[18px] border border-line bg-card px-[18px] pb-4 pt-[18px]">
+          <div className="flex items-end">
+            <span className="text-[40px] font-extrabold leading-[1.05] tracking-[-1.4px] tabular-nums">
+              {count(balance)}
+            </span>
+            <span className="mb-[5px] ml-2 text-[12.5px] text-dim">
+              {t(balance === 1 ? "spark" : "sparks")}
+            </span>
+            <span className="flex-1" />
+            <Bolt className="size-[18px] text-accent" aria-hidden />
           </div>
-          <div className="relative mt-3 flex gap-4 text-[9px] text-dim">
-            <span>Earned {data ? count(data.wallet.earned) : "—"}</span>
-            <span>Spent {data ? count(data.wallet.spent) : "—"}</span>
-            <span>{owned.length} themes owned</span>
+          <div className="mt-2.5 flex items-start">
+            <TrendingUp className="mt-0.5 size-4 shrink-0 text-[var(--good)]" aria-hidden />
+            <p className="ml-[7px] min-w-0 flex-1 text-[11.5px] leading-[1.4] text-dim">
+              {notes.join(" ")}
+            </p>
           </div>
         </div>
 
-        <div className="mt-3 flex gap-1 overflow-x-auto pb-1">
-          {([
-            ["themes", "Themes", <Palette key="t" className="size-3.5" />],
-            ["wallet", "Wallet", <WalletIcon key="w" className="size-3.5" />],
-            ["streaks", "Streaks", <Flame key="s" className="size-3.5" />],
-            ["ladder", "Ladder", <Trophy key="l" className="size-3.5" />],
-            ["medals", "Medals", <Medal key="m" className="size-3.5" />],
-          ] as const).map(([key, label, icon]) => (
-            <button key={key} type="button" onClick={() => setTab(key)} className={cn("flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition", tab === key ? "bg-accent text-[var(--accent-ink)]" : "bg-[color-mix(in_srgb,var(--ink)_6%,transparent)] text-dim hover:text-ink")}>
-              {icon}{label}
-            </button>
-          ))}
+        {/* ---- the door to the boards ------------------------------------- */}
+        <button
+          type="button"
+          onClick={() => navigate("/app/sparks/leaderboard")}
+          className="mt-3.5 flex w-full items-center rounded-[16px] border border-line bg-card py-[13px] pl-4 pr-3 text-left transition hover:bg-[color-mix(in_srgb,var(--ink)_3%,transparent)]"
+        >
+          <span className="flex size-[34px] shrink-0 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-accent">
+            <Trophy className="size-[18px]" aria-hidden />
+          </span>
+          <span className="ml-3 min-w-0 flex-1">
+            <span className="block text-[13.5px] font-bold">{t("Sparks leaderboard")}</span>
+            <span className="mt-0.5 block truncate text-[11.5px] text-dim">
+              {t("Who earned the most this month, and this year")}
+            </span>
+          </span>
+          <ChevronRight className="size-[17px] shrink-0 text-dim" aria-hidden />
+        </button>
+
+        {/* ---- the three numbers, together, because they are different ----- */}
+        <div className="mt-3.5 rounded-[16px] border border-line bg-[color-mix(in_srgb,var(--ink)_4%,transparent)] px-4 py-3.5">
+          <p className="text-[13px] font-bold">{t("These are three different numbers")}</p>
+          <div className="mt-2.5 space-y-2.5">
+            <Explain
+              label={t("Alive now")}
+              value={alive}
+              line={t("The runs going right now. This one falls — 48 hours of one person's silence breaks a run, and its days stop being counted here.")}
+            />
+            <Explain
+              label={t("Ever earned")}
+              value={earned}
+              line={t("Every day that was ever counted. Days earned stay earned; an ended run leaves this alone, and it is what the themes are unlocked by.")}
+            />
+            <Explain
+              label={t("Spent")}
+              value={spent}
+              line={t("What the themes have taken. It only ever goes up as well — a bought theme is not given back.")}
+            />
+          </div>
         </div>
-      </header>
 
-      <main className="px-4 pt-3">
-        {sparks.isLoading ? <PageSkeleton rows={3} /> : sparks.isError ? (
-          <div className="card"><ErrorState error={sparks.error} onRetry={() => void sparks.refetch()} /></div>
-        ) : tab === "streaks" ? (
-          !data?.sparks.length ? (
-            <EmptyState icon={<Flame className="size-6" />} title="No sparks yet" body="Speak on two days in a row with somebody and the first one lights." action={<Link to="/app/convo" className="btn btn-primary">Open a convo</Link>} />
-          ) : (
-            <div className="space-y-2.5">{data.sparks.map((spark, index) => <SparkCard key={spark.thread_id ?? spark.id ?? index} spark={spark} />)}</div>
-          )
-        ) : tab === "wallet" || tab === "themes" ? (
-          wallet.isLoading ? <PageSkeleton rows={2} /> : wallet.isError ? (
-            <div className="card"><ErrorState error={wallet.error} onRetry={() => void wallet.refetch()} /></div>
-          ) : tab === "themes" ? (
-            wallet.data ? <ThemeShop wallet={wallet.data} /> : <PageSkeleton rows={2} />
-          ) : (
-            <div className="space-y-4">
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  ["Balance", wallet.data?.balance ?? 0],
-                  ["Earned", wallet.data?.earned ?? 0],
-                  ["Spent", wallet.data?.spent ?? 0],
-                ].map(([label, value]) => (
-                  <div key={label} className="rounded-[14px] border border-line bg-card px-3 py-3 text-center">
-                    <p className="text-[18px] font-extrabold tabular-nums">{count(Number(value))}</p>
-                    <p className="text-[9px] font-bold uppercase tracking-wider text-dim">{label}</p>
-                  </div>
-                ))}
-              </div>
+        {/* ---- the share-to-win door -------------------------------------- */}
+        <div className="mt-3.5 rounded-[18px] border border-line bg-card p-[18px]">
+          <div className="flex">
+            <span className="flex size-[38px] shrink-0 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-accent">
+              <UserPlus className="size-[19px]" aria-hidden />
+            </span>
+            <div className="ml-3 min-w-0 flex-1">
+              <p className="text-[14px] font-extrabold">{t("Invite friends, win sparks")}</p>
+              <p className="mt-[3px] text-[11.5px] leading-[1.35] text-dim">
+                {inviteReward > 0
+                  ? t(`A friend who joins pays you ${count(inviteReward)} sparks.`)
+                  : t("A friend who joins pays you sparks.")}
+              </p>
+            </div>
+          </div>
+          <Button
+            className="mt-3.5 w-full"
+            loading={sharing}
+            onClick={() => void invite()}
+          >
+            {t("Share your link")}
+          </Button>
+        </div>
 
-              {wallet.data?.people.length ? (
-                <section>
-                  <h2 className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-dim">Who put days in</h2>
-                  <div className="mt-2 divide-y divide-line/70 rounded-[16px] border border-line bg-card">
-                    {wallet.data.people.map((row) => (
-                      <div key={row.thread_id} className="flex items-center gap-3 px-3 py-2.5">
-                        <Avatar user={row.other} size={32} />
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-[11px] font-bold">{row.other?.name || row.other?.username || "A convo"}</p>
-                          <p className="text-[9px] text-dim">{row.first || ""}{row.last ? ` to ${row.last}` : ""}</p>
-                        </div>
-                        <span className="text-[11px] font-extrabold tabular-nums text-accent">{row.days}d</span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
+        {/* ---- the two halves of the wallet -------------------------------- */}
+        <div className="mt-5 flex gap-2">
+          <TabChip
+            on={tab === 0}
+            label={t("People")}
+            total={people.length}
+            onTap={() => setTab(0)}
+          />
+          <TabChip
+            on={tab === 1}
+            label={t("History")}
+            total={lines.length}
+            onTap={() => setTab(1)}
+          />
+        </div>
 
-              <section>
-                <h2 className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-dim">Ledger</h2>
-                {!wallet.data?.entries.length ? (
-                  <p className="py-8 text-center text-[11px] text-dim">No wallet lines yet.</p>
+        <div className="mt-3">
+          {/* The three ways this body is not the body: refused, still being
+              read, and genuinely nothing. On a refresh the last answer stays on
+              the screen while the new one is asked for — a pull that blanked the
+              page and filled it again a moment later would be a page that
+              flickered every time somebody looked at it. */}
+          {book.isError ? (
+            <p className="whitespace-pre-line py-1.5 text-[12.5px] leading-[1.5] text-dim">
+              {t(`The ledger could not be read just now.\n${errorMessage(book.error)}`)}
+            </p>
+          ) : book.isLoading ? (
+            <div className="flex justify-center py-[26px]">
+              <span className="size-[22px] animate-spin rounded-full border-2 border-accent border-t-transparent" />
+            </div>
+          ) : tab === 1 ? (
+            <>
+              <Head>{t("EVERY LINE")}</Head>
+              <div className="mt-1">
+                {lines.length === 0 ? (
+                  <Empty line={t("Nothing here yet.")} />
                 ) : (
-                  <div className="mt-2 divide-y divide-line/70 rounded-[16px] border border-line bg-card">
-                    {wallet.data.entries.map((entry) => (
-                      <div key={entry.id} className="flex items-center gap-3 px-3 py-2.5">
-                        <span className={cn("flex size-7 items-center justify-center rounded-full text-[10px] font-extrabold", entry.amount >= 0 ? "bg-[color-mix(in_srgb,var(--good)_12%,transparent)] text-[var(--good)]" : "bg-[color-mix(in_srgb,var(--bad)_10%,transparent)] text-[var(--bad)]")}>{entry.amount >= 0 ? "+" : ""}{entry.amount}</span>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-[11px] font-bold">{entry.label || entry.kind}</p>
-                          <p className="text-[9px] text-dim">{entry.day || relativeTime(entry.created_at)}{entry.other ? ` · ${entry.other.name}` : ""}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  lines.map((line) => <LedgerLine key={line.id} line={line} />)
                 )}
-              </section>
-
-              {owned.length ? (
-                <section>
-                  <h2 className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-dim">Owned themes</h2>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {owned.map((key) => (
-                      <button key={key} type="button" onClick={() => void setDesign(key)} className="rounded-full border border-line bg-card px-3 py-1.5 text-[10px] font-bold text-dim hover:border-accent/40 hover:text-ink">{key}</button>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-            </div>
-          )
-        ) : tab === "ladder" ? (
-          <div className="space-y-2">
-            {(catalog?.tiers ?? []).map((tier, index) => {
-              const active = current === tier.key;
-              return (
-                <div key={tier.key} className={cn("flex items-center gap-3 rounded-[16px] border bg-card px-3.5 py-3", active ? "border-accent/50" : "border-line")}>
-                  <span className="flex size-9 items-center justify-center rounded-full text-[13px] font-extrabold" style={{ color: tone(tier), backgroundColor: `color-mix(in srgb, ${tone(tier)} 12%, transparent)` }}>{index + 1}</span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[12px] font-extrabold">{tier.name}</p>
-                    <p className="text-[10px] text-dim">{tier.days} · {tier.shields} {tier.shields === 1 ? "shield" : "shields"}</p>
-                  </div>
-                  {active ? <span className="rounded-full bg-[var(--accent-soft)] px-2 py-1 text-[8px] font-extrabold uppercase tracking-wider text-accent">Now</span> : null}
-                </div>
-              );
-            })}
-            <p className="pt-2 text-center text-[10px] leading-4 text-dim">Century is kept for good. The count carries on after {catalog?.century ?? 100}.</p>
-          </div>
-        ) : medals.isLoading ? <PageSkeleton rows={2} /> : medals.isError ? (
-          <div className="card"><ErrorState error={medals.error} onRetry={() => void medals.refetch()} /></div>
-        ) : !medals.data?.medals.length ? (
-          <EmptyState icon={<Medal className="size-6" />} title="No medals yet" body="A medal is kept when a spark reaches a new award." />
-        ) : (
-          <div className="grid gap-2 sm:grid-cols-2">
-            {medals.data.medals.map((medal) => (
-              <div key={medal.id} className="flex items-center gap-3 rounded-[16px] border border-line bg-card px-3.5 py-3">
-                <span className="flex size-10 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] text-accent"><Medal className="size-5" /></span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[12px] font-extrabold capitalize">{medal.kind || "Spark medal"}</p>
-                  <p className="text-[10px] text-dim">{medal.reached} days{medal.created_at ? ` · ${relativeTime(medal.created_at)}` : ""}</p>
-                </div>
-                <Link to={medal.thread_id ? `/app/convo/${medal.thread_id}` : "/app/convo"} className="icon-btn" aria-label="Open convo"><ArrowUpRight className="size-4" /></Link>
               </div>
-            ))}
-          </div>
-        )}
-      </main>
+            </>
+          ) : (
+            <>
+              <Head
+                right={
+                  people.length > 1 ? (
+                    <span className="text-[10.5px] text-dim">
+                      {t(`${count(people.length)} people`)}
+                    </span>
+                  ) : undefined
+                }
+              >
+                {t("WHO THE DAYS CAME FROM")}
+              </Head>
+              <div className="mt-1.5">
+                {people.length === 0 ? (
+                  <Empty line={t("Nobody yet. A day two people talk on is one spark, and it does not matter who of you sent first.")} />
+                ) : (
+                  people.map((person) => (
+                    <Person key={person.thread_id} person={person} spark={live.get(person.thread_id)} />
+                  ))
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
+}
+
+/** One of the two halves, as a chip. The count is the rows behind it. */
+function TabChip({
+  on,
+  label,
+  total,
+  onTap,
+}: {
+  on: boolean;
+  label: string;
+  total: number;
+  onTap: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onTap}
+      aria-pressed={on}
+      className={cn(
+        "flex flex-1 items-center justify-center rounded-[12px] border py-[9px] transition",
+        on
+          ? "border-[color-mix(in_srgb,var(--accent)_45%,transparent)] bg-[color-mix(in_srgb,var(--accent)_14%,transparent)]"
+          : "border-transparent bg-[color-mix(in_srgb,var(--ink)_4%,transparent)]",
+      )}
+    >
+      <span className={cn("text-[13px]", on ? "font-extrabold text-accent" : "font-semibold text-dim")}>
+        {label}
+      </span>
+      <span
+        className={cn(
+          "ml-1.5 text-[12px] font-bold",
+          on ? "text-[color-mix(in_srgb,var(--accent)_75%,transparent)]" : "text-[color-mix(in_srgb,var(--ink)_38%,transparent)]",
+        )}
+      >
+        {count(total)}
+      </span>
+    </button>
+  );
+}
+
+/**
+ * One person's share of the wallet: their face, their name, their days, and the
+ * spark the two of them have going as it stands.
+ *
+ * A tap opens the conversation, because the answer to "with whom" is a person
+ * and the only thing anybody wants to do about one is talk to them. The row
+ * carries the thread rather than the account, so it works for a group exactly
+ * as it does for a person.
+ */
+function Person({ person, spark }: { person: WalletPerson; spark?: Spark }) {
+  const { t } = usePreferences();
+  const name = person.other?.name || person.other?.username || "";
+  const isAlive = Boolean(spark?.alive);
+
+  return (
+    <Link
+      to={person.thread_id ? `/app/convo/${person.thread_id}` : "/app/convo"}
+      className="flex items-center py-[7px]"
+    >
+      <Avatar name={name} src={person.other?.avatar} size={34} />
+      <span className="ml-[11px] min-w-0 flex-1">
+        <span className="flex items-center">
+          <span className="truncate text-[13.5px] font-semibold">{name || t("Somebody")}</span>
+          {isAlive ? (
+            <span className="ml-1.5 shrink-0 rounded-[5px] bg-[color-mix(in_srgb,var(--accent)_16%,transparent)] px-[5px] py-[1.5px] text-[9.5px] font-extrabold text-accent">
+              {t("live")}
+            </span>
+          ) : null}
+        </span>
+        <span className="mt-0.5 block truncate text-[11px] text-dim">
+          {person.last
+            ? t(`last counted ${person.last}`)
+            : t(`first counted ${person.first ?? ""}`)}
+        </span>
+      </span>
+      <span className="ml-2 flex shrink-0 items-center">
+        {spark ? (
+          <>
+            <Bolt
+              className={cn("size-[17px]", isAlive ? "text-accent" : "text-[color-mix(in_srgb,var(--ink)_30%,transparent)]")}
+              aria-hidden
+            />
+            <span className={cn("ml-0.5 text-[13px] font-extrabold tabular-nums", isAlive && "text-accent")}>
+              {count(spark.count)}
+            </span>
+          </>
+        ) : (
+          // No live run with this person, so the number that stands is the one
+          // this page is certain of: every day ever counted between them.
+          <span className="text-[13px] font-bold tabular-nums">{plural(person.days, "day")}</span>
+        )}
+      </span>
+    </Link>
+  );
+}
+
+/**
+ * One line of the ledger, newest first, every line naming who it was with.
+ *
+ * A day earned is titled by the person and a purchase by what was bought —
+ * which are the two ways a line here can be read, and neither of them is "a day
+ * counted" forty times over. An earn with a label is a share-to-win invite and
+ * not a conversation-day: it was not with anybody and has no day, so it reads
+ * from its label rather than from a date.
+ */
+function LedgerLine({ line }: { line: WalletEntry }) {
+  const { t } = usePreferences();
+  const label = line.label ?? "";
+  const isSpent = line.amount < 0;
+  const isInvite = !isSpent && label !== "";
+
+  const title = isSpent
+    ? label || t("Spent")
+    : isInvite
+      ? label
+      : line.other?.name || line.other?.username || t("A day counted");
+  const sub = isSpent
+    ? t(`${line.day ?? ""} · a theme you kept`)
+    : isInvite
+      ? t("a friend who joined")
+      : t(`${line.day ?? ""} · a day you two talked`);
+
+  return (
+    <div className="flex items-center py-[7px]">
+      {isSpent ? (
+        <MinusCircle className="size-[18px] shrink-0 text-[var(--bad)]" aria-hidden />
+      ) : isInvite ? (
+        <UserPlus className="size-[18px] shrink-0 text-[var(--good)]" aria-hidden />
+      ) : (
+        <Avatar
+          name={line.other?.name || line.other?.username || ""}
+          src={line.other?.avatar}
+          size={24}
+        />
+      )}
+      <span className="ml-2.5 min-w-0 flex-1">
+        <span className="block truncate text-[13px]">{title}</span>
+        <span className="block truncate text-[11px] text-dim">{sub}</span>
+      </span>
+      <span
+        className={cn(
+          "ml-2 shrink-0 text-[13px] font-bold tabular-nums",
+          isSpent && "text-[var(--bad)]",
+        )}
+      >
+        {line.amount > 0 ? `+${line.amount}` : String(line.amount)}
+      </span>
+    </div>
+  );
+}
+
+/** The one line a half of the wallet has to say when it has nothing behind it. */
+function Empty({ line }: { line: string }) {
+  return <p className="py-1 text-[12.5px] leading-[1.5] text-dim">{line}</p>;
 }

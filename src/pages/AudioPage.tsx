@@ -8,11 +8,9 @@ import {
   ListMusic,
   LoaderCircle,
   MoreVertical,
-  Music2,
   Pause,
   Play,
   Plus,
-  Podcast,
   Search,
   UserRound,
   X,
@@ -25,6 +23,15 @@ import { EmptyState, ErrorState, PageSkeleton } from "@/components/States";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { duration } from "@/lib/format";
+import {
+  CoverArt,
+  coverTone,
+  playCount,
+  seedOf,
+  trackIsPodcast,
+  trackLine,
+  trackUnder,
+} from "@/features/audio/parts";
 import { uploadAsset } from "@/lib/upload";
 import { useAuth } from "@/providers/AuthProvider";
 import { usePlayer } from "@/providers/PlayerProvider";
@@ -33,42 +40,6 @@ import type { AudioHome, Playlist, Track } from "@/types/api";
 
 type Chip = "all" | "playlists" | "podcasts" | "artists";
 type Mode = "home" | "search";
-
-const COVER_TONES = ["#2A3EB1", "#00796B", "#AD1457", "#6A3FB5", "#9C5A00", "#116A80"];
-
-function seedOf(value: number | string | undefined | null) {
-  const number = typeof value === "number" ? value : Number.parseInt(String(value ?? "0"), 10);
-  return Number.isFinite(number) ? Math.abs(number) : 0;
-}
-
-function coverTone(seed: number) {
-  return COVER_TONES[seed % COVER_TONES.length];
-}
-
-function playCount(value: number | undefined) {
-  const plays = Math.max(0, Math.trunc(value ?? 0));
-  if (plays === 1) return "1 play";
-  if (plays < 1000) return `${plays} plays`;
-  if (plays < 1_000_000) {
-    const thousands = plays / 1000;
-    return `${thousands < 10 ? thousands.toFixed(1) : Math.round(thousands)}K plays`;
-  }
-  const millions = plays / 1_000_000;
-  return `${millions < 10 ? millions.toFixed(1) : Math.round(millions)}M plays`;
-}
-
-function trackIsPodcast(track: Track) {
-  return track.kind === "podcast";
-}
-
-function trackLine(track: Track) {
-  return trackIsPodcast(track) ? track.series || track.artist : track.title;
-}
-
-function trackUnder(track: Track) {
-  if (!trackIsPodcast(track)) return track.artist;
-  return [track.title, track.artist].filter(Boolean).join(" · ");
-}
 
 function playlistWhose(playlist: Playlist) {
   if (playlist.mine) return "yours";
@@ -89,34 +60,6 @@ function linkToken(value: string) {
   if (marker >= 0 && parts[marker + 1]) return parts[marker + 1];
   if (parts.length === 1) return parts[0];
   return null;
-}
-
-function CoverArt({
-  seed,
-  podcast,
-  size = 46,
-  radius,
-}: {
-  seed: number;
-  podcast?: boolean;
-  size?: number;
-  radius?: number;
-}) {
-  const Icon = podcast ? Podcast : Music2;
-  return (
-    <span
-      className="flex shrink-0 items-center justify-center text-white"
-      style={{
-        width: size,
-        height: size,
-        borderRadius: radius ?? size * 0.3,
-        backgroundColor: coverTone(seed),
-      }}
-      aria-hidden
-    >
-      <Icon style={{ width: size * 0.42, height: size * 0.42 }} />
-    </span>
-  );
 }
 
 function NowBars({ playing, size = 14 }: { playing?: boolean; size?: number }) {

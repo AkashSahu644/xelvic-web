@@ -26,6 +26,82 @@ export function relativeTime(value: string | null | undefined): string {
   return rtf.format(Math.round(seconds / 31_536_000), "year");
 }
 
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+function parse(value: string | Date | null | undefined): Date | null {
+  if (value === null || value === undefined || value === "") return null;
+  const at = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(at.getTime()) ? null : at;
+}
+
+/** A day: '25 Sep'. The app's `shortDay`. */
+export function shortDay(value: string | Date | null | undefined): string {
+  const at = parse(value);
+  if (!at) return "";
+  return `${at.getDate()} ${MONTHS[at.getMonth()]}`;
+}
+
+/** The same day with its year: '25 Sep 2026'. The app's `fullDay`. */
+export function fullDay(value: string | Date | null | undefined): string {
+  const at = parse(value);
+  if (!at) return "";
+  return `${shortDay(at)} ${at.getFullYear()}`;
+}
+
+/**
+ * A month by its name: 'Sep'.
+ *
+ * For a series gathered up by month, where every point *is* a month and a day
+ * printed against it would be a date nobody asked about. The app's `monthName`.
+ */
+export function monthName(value: string | Date | null | undefined): string {
+  const at = parse(value);
+  if (!at) return "";
+  return MONTHS[at.getMonth()];
+}
+
+/**
+ * How long ago, in the app's own ladder.
+ *
+ * Not `relativeTime` above: that is the browser's `Intl` word, which says
+ * "2 minutes ago" in a sentence this app does not write and says "yesterday"
+ * where the phone says "1 day ago". This is `ago()` in
+ * `app/lib/screens/widgets.dart`, word for word — under a minute is "just now",
+ * then minutes, hours and days to a week, and past a week the date itself
+ * ("25 Sep"), because "34 days ago" is a number somebody has to work out rather
+ * than a day they recognise.
+ *
+ * Four strings, and the app writes all four as constants while the browser
+ * would translate them into eleven languages' worth of grammar; the words are
+ * the app's, in English, the same way the rest of this port carries them.
+ */
+export function ago(value: string | Date | null | undefined): string {
+  const at = parse(value);
+  if (!at) return "";
+  const seconds = Math.floor((Date.now() - at.getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return days === 1 ? "1 day ago" : `${days} days ago`;
+  return shortDay(at);
+}
+
 export function clock(value: string | null | undefined): string {
   if (!value) return "";
   const date = new Date(value);

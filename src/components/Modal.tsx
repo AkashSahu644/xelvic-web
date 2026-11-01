@@ -127,28 +127,69 @@ export function Modal({
   );
 }
 
+/**
+ * A yes/no question with the app's own three parts.
+ *
+ * `body` is what is about to happen and `note` is the sentence underneath it
+ * that says the part people skip — *"This cannot be undone."*, *"After 30 days
+ * it is gone for good and cannot be recovered."* The app's `confirm()` has
+ * carried both since the dialogs were written, and a confirmation that dropped
+ * the second half would be asking a question with the answer left out.
+ */
 export function ConfirmDialog({
   open,
   onClose,
   onConfirm,
   title,
   body,
+  note,
   confirmLabel = "Confirm",
   destructive,
   loading,
+  icon,
 }: {
   open: boolean;
   onClose: () => void;
   onConfirm: () => void;
   title: string;
   body?: string;
+  note?: string;
   confirmLabel?: string;
   destructive?: boolean;
   loading?: boolean;
+  /**
+   * The app's dialogs all open with a mark — `confirm(icon: ...)` — and the one
+   * place it carries meaning rather than decoration is a destructive one, where
+   * `Icons.lock_reset` or `Icons.delete_outline` says in a glance what the
+   * sentence underneath is about to say in words.
+   */
+  icon?: ReactNode;
 }) {
   return (
     <Modal open={open} onClose={onClose} title={title} size="sm">
-      {body ? <p className="px-5 py-4 text-sm leading-6 text-dim">{body}</p> : null}
+      {icon || body || note ? (
+        <div className="px-5 py-4">
+          {icon ? (
+            <span
+              className={cn(
+                "mb-3 flex size-10 items-center justify-center rounded-full",
+                destructive
+                  ? "bg-[color-mix(in_srgb,var(--bad)_12%,transparent)] text-[var(--bad)]"
+                  : "bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-accent",
+              )}
+              aria-hidden
+            >
+              {icon}
+            </span>
+          ) : null}
+          {body ? <p className="text-sm leading-6 text-dim">{body}</p> : null}
+          {note ? (
+            <p className="mt-2 text-[12px] leading-5 text-[color-mix(in_srgb,var(--ink)_55%,transparent)]">
+              {note}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       <div className="flex justify-end gap-2 px-5 pb-5 pt-2">
         <button type="button" className="btn btn-secondary" onClick={onClose}>
           Cancel

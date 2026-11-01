@@ -16,8 +16,10 @@ import {
   Sparkles,
   UserRound,
   CirclePlay,
+  Wallet,
 } from "lucide-react";
 import { Avatar } from "@/components/Avatar";
+import { Backdrop } from "@/components/Backdrop";
 import { BrandMark } from "@/components/Brand";
 import { PlayerBar } from "@/components/PlayerBar";
 import { cn } from "@/lib/cn";
@@ -37,7 +39,10 @@ const secondary = [
   { to: "/app/search", label: "Search", icon: Search },
   { to: "/app/alerts", label: "Notifications", icon: Bell },
   { to: "/app/saved", label: "Saved", icon: Bookmark },
-  { to: "/app/sparks", label: "Sparks", icon: Sparkles },
+  // Named for where it goes. The screen behind this row is the app's Wallet —
+  // the balance, the two numbers beside it, and the ledger that explains them —
+  // so a row called "Sparks" would be promising a different page.
+  { to: "/app/sparks", label: "Wallet", icon: Wallet },
 ];
 
 function pageForPath(pathname: string): ShellPage | null {
@@ -150,38 +155,25 @@ function ProfileMenu({ compact = false }: { compact?: boolean }) {
 
 export function AppShell() {
   const location = useLocation();
-  const { artFor, palette, design } = useTheme();
+  const { backdropFor, design } = useTheme();
   const { user } = useAuth();
   const page = pageForPath(location.pathname);
-  const art = artFor(page);
+  const backdrop = backdropFor(page);
+  const art = backdrop?.art ?? null;
   const inChat = location.pathname.startsWith("/app/convo");
 
   return (
-    <div className="relative min-h-dvh bg-page text-ink">
+    // `isolate` is load-bearing and not decoration: it is what keeps the
+    // backdrop's negative stack level inside this element, so the picture lands
+    // over this page's own ground and under every card and line the pages draw.
+    <div className="relative isolate min-h-dvh bg-page text-ink">
       <a
         href="#main-content"
         className="fixed left-3 top-3 z-[100] -translate-y-20 rounded-[12px] bg-card px-4 py-3 font-bold text-ink shadow-lg focus:translate-y-0"
       >
         Skip to main content
       </a>
-      {art ? (
-        <>
-          <div
-            className="pointer-events-none fixed inset-0 bg-cover bg-center"
-            style={{ backgroundImage: `url(${art})` }}
-            aria-hidden
-          />
-          <div
-            className="pointer-events-none fixed inset-0"
-            style={{
-              background: palette.isDark
-                ? `rgba(0,0,0,${Math.min(0.82, 0.32 + palette.scrim * 0.5)})`
-                : "linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.28))",
-            }}
-            aria-hidden
-          />
-        </>
-      ) : null}
+      <Backdrop backdrop={backdrop} />
 
       <aside
         className={cn(

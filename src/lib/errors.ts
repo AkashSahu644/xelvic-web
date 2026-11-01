@@ -3,13 +3,13 @@ import type { ApiErrorBody } from "@/types/api";
 export class ApiError extends Error {
   status: number;
   code: string;
-  fields: Record<string, string>;
+  fields: Record<string, string | string[]>;
   retryAfter: number | null;
 
   constructor(message: string, options: {
     status?: number;
     code?: string;
-    fields?: Record<string, string>;
+    fields?: Record<string, string | string[]>;
     retryAfter?: number | null;
   } = {}) {
     super(message);
@@ -47,7 +47,19 @@ export function errorFromResponse(status: number, body: unknown, retryAfter?: st
               : status >= 500
                 ? "The server had a problem. Try again."
                 : "That request did not work.";
-  return new ApiError(detail?.message || fallback, {
+  /*
+   * A bare `{"detail": "..."}` reads as the message too.
+   *
+   * Most refusals arrive inside the envelope, but a view that answers with its
+   * own `Response({"detail": ...}, 400)` skips the exception handler that builds
+   * it — `apps/verify/views.ApplyView` does exactly that for the rule its
+   * service raises, and the sentence there ("Up to 5 documents, please.") is the
+   * only thing on the response that says what to do about it. Dropping it in
+   * favour of "That request did not work." would be this client throwing away an
+   * answer the server took the trouble to write.
+   */
+  const bare = typeof parsed.detail === "string" ? parsed.detail : "";
+  return new ApiError(detail?.message || bare || fallback, {
     status,
     code: detail?.code || (status === 429 ? "throttled" : "request_failed"),
     fields: detail?.fields || {},

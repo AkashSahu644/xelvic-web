@@ -43,7 +43,7 @@ import { useAlerts } from "@/features/alerts/useAlerts";
 import { ConvoRow } from "@/features/convo/ConvoRow";
 import { ConvoSheet } from "@/features/convo/ConvoSheet";
 import { VaultModal } from "@/features/convo/VaultModal";
-import { stamp } from "@/features/convo/model";
+import { stamp, threadTitle } from "@/features/convo/model";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
@@ -53,6 +53,7 @@ import { useTheme } from "@/providers/ThemeProvider";
 import { useToast } from "@/providers/ToastProvider";
 import type {
   ChatRequest,
+  Message,
   MomentTray,
   Page,
   Relationship,
@@ -89,6 +90,17 @@ function alertSeat(rows: ThreadCard[], pinned: boolean, at: string | null) {
     if (Number.isNaN(there) || there < mine) return seat;
   }
   return seat;
+}
+
+function sortThreads(rows: ThreadCard[]) {
+  return [...rows].sort((a, b) => {
+    const ap = a.pinned === true;
+    const bp = b.pinned === true;
+    if (ap !== bp) return ap ? -1 : 1;
+    const at = Date.parse(b.last_message_at ?? b.preview?.at ?? "");
+    const bt = Date.parse(a.last_message_at ?? a.preview?.at ?? "");
+    return (Number.isNaN(at) ? 0 : at) - (Number.isNaN(bt) ? 0 : bt);
+  });
 }
 
 interface CallPerson {
@@ -130,7 +142,7 @@ function callLine(log: CallLog) {
   if (log.mine === "declined") return "You declined";
   if (log.mine === "joined" || log.mine === "left") {
     const way = outgoing ? "Outgoing" : "Incoming";
-    return log.seconds ? `${way} Â· ${callLength(log.seconds)}` : way;
+    return log.seconds ? `${way} · ${callLength(log.seconds)}` : way;
   }
   if (log.outcome === "declined") return outgoing ? "Declined" : "Missed";
   return outgoing ? "No answer" : "Missed";
@@ -348,7 +360,7 @@ function RequestsPanel() {
         {},
       );
       toast({
-        title: yes ? "Accepted â€” the convo is open." : "Declined.",
+        title: yes ? "Accepted — the convo is open." : "Declined.",
         tone: "success",
       });
       refresh();
@@ -444,7 +456,7 @@ function RequestsPanel() {
             onClick={() => void answer(person.id, true)}
             className="h-[42px] flex-1 rounded-[13px] bg-accent text-[12.5px] font-bold text-on-accent shadow-[0_4px_12px_color-mix(in_srgb,var(--accent)_22%,transparent)] transition hover:brightness-105 disabled:opacity-55"
           >
-            {busy === person.id ? "Workingâ€¦" : "Accept"}
+            {busy === person.id ? "Working…" : "Accept"}
           </button>
         </div>
       </div>
@@ -1017,6 +1029,19 @@ export function ConvoPage({
     retry: false,
     staleTime: 20_000,
   });
+  const deferredSearch = useDeferredValue(listSearch.trim());
+  // Cross-conversation message search, straight from the server. The local
+  // filter below only narrows the list of convos; this finds the words
+  // themselves, including in threads the filter would never surface.
+  const messageSearch = useQuery({
+    queryKey: ["chat-search", deferredSearch],
+    queryFn: () =>
+      api.get<{ query: string; messages: Message[] }>("/chat/search/", {
+        query: { q: deferredSearch },
+      }),
+    enabled: searchOpen && deferredSearch.length >= 2,
+    staleTime: 20_000,
+  });
   const alerts = useAlerts();
   const sparks = useQuery({
     queryKey: ["sparks"],
@@ -1042,15 +1067,75 @@ export function ConvoPage({
       "call.ended",
       "call.update",
     ],
-    () => {
-      void queryClient.invalidateQueries({ queryKey: ["threads"] });
-      void queryClient.invalidateQueries({ queryKey: ["requests-count"] });
-      void queryClient.invalidateQueries({ queryKey: ["social-requests"] });
-      void queryClient.invalidateQueries({ queryKey: ["call-history"] });
+    (frame) => {
+      const data = (frame.data ?? {}) as Record<string, unknown>;
+      // `thread.update` is the server's own answer for this seat: its unread
+      // count, the row's preview (when this bubble is the one the row is
+      // about), and when. Patch the card in place instead of refetching the
+      // whole inbox for every message that lands anywhere.
+      if (frame.event === "thread.update") {
+        const threadId = String(data.thread_id ?? "");
+        if (!threadId) return;
+        const preview = (data.preview ?? undefined) as ThreadCard["preview"] | undefined;
+        const at = typeof data.at === "string" ? data.at : undefined;
+        let found = false;
+        queryClient.setQueryData<{ threads: ThreadCard[]; unread: number }>(
+          ["threads"],
+          (current) => {
+            if (!current?.threads) return current;
+            let delta = 0;
+            const rows = current.threads.map((row) => {
+              if (row.id !== threadId) return row;
+              found = true;
+              const before = row.unread_count ?? row.unread ?? 0;
+              const after = typeof data.unread === "number" ? data.unread : before;
+              delta = after - before;
+              return {
+                ...row,
+                unread_count: after,
+                unread_other_count:
+                  typeof data.unread_other_count === "number"
+                    ? data.unread_other_count
+                    : row.unread_other_count,
+                last_message_at: at ?? row.last_message_at,
+                // The frame leaves `preview` out when this bubble is not the
+                // line the row describes (a cleared row, for instance); in
+                // that case the honest thing is to keep what we hold.
+                preview: preview
+                  ? { ...preview, at: preview.at ?? at }
+                  : row.preview,
+              };
+            });
+            return {
+              threads: sortThreads(rows),
+              unread: Math.max(0, (current.unread ?? 0) + delta),
+            };
+          },
+        );
+        if (!found) {
+          // A thread this list does not know yet (a first message, a new
+          // group, a request leaving the gate): let the server answer.
+          void queryClient.invalidateQueries({ queryKey: ["threads"] });
+        }
+      } else if (frame.event === "message.new") {
+        // Every `message.new` that should move a row is paired with a
+        // `thread.update`; this is only a safety net for threads the frame
+        // did not describe.
+        void queryClient.invalidateQueries({ queryKey: ["requests-count"] });
+      } else {
+        void queryClient.invalidateQueries({ queryKey: ["threads"] });
+        void queryClient.invalidateQueries({ queryKey: ["requests-count"] });
+        void queryClient.invalidateQueries({ queryKey: ["social-requests"] });
+        void queryClient.invalidateQueries({ queryKey: ["call-history"] });
+      }
     },
   );
 
   const rows = useMemo(() => threads.data?.threads ?? [], [threads.data]);
+  const threadById = useMemo(
+    () => new Map(rows.map((row) => [String(row.id), row])),
+    [rows],
+  );
   const unreadRows = useMemo(
     () =>
       rows.filter((thread) => (thread.unread_count ?? thread.unread ?? 0) > 0),
@@ -1103,6 +1188,12 @@ export function ConvoPage({
         .includes(query);
     });
   }, [listSearch, rows]);
+
+  function openSearchResult(message: Message) {
+    setSearchOpen(false);
+    setListSearch("");
+    navigate(`/app/convo/${message.thread}`);
+  }
 
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: ["threads"] });
@@ -1326,6 +1417,76 @@ export function ConvoPage({
                   </button>
                 ) : null}
               </label>
+              {searchOpen && deferredSearch.length >= 2 ? (
+                <div className="mt-1.5 rounded-[12px] border border-line bg-card p-1.5 shadow-[0_6px_18px_rgba(17,17,26,0.05)]">
+                  <div className="flex items-center justify-between px-2 py-1">
+                    <span className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-dim">
+                      In messages
+                    </span>
+                    {messageSearch.isFetching ? (
+                      <Spinner className="size-3" />
+                    ) : (
+                      <span className="text-[9px] font-semibold tabular-nums text-dim">
+                        {messageSearch.data?.messages.length ?? 0}
+                      </span>
+                    )}
+                  </div>
+                  {messageSearch.isLoading ? (
+                    <div className="space-y-1 px-1 pb-1" aria-hidden>
+                      {[0, 1, 2].map((row) => (
+                        <div key={row} className="skeleton h-11 rounded-[10px]" />
+                      ))}
+                    </div>
+                  ) : messageSearch.isError ? (
+                    <p className="px-2 py-2 text-[10.5px] leading-4 text-dim">
+                      {errorMessage(messageSearch.error)}{" "}
+                      <button
+                        type="button"
+                        onClick={() => void messageSearch.refetch()}
+                        className="font-bold text-accent hover:underline"
+                      >
+                        Try again
+                      </button>
+                    </p>
+                  ) : !messageSearch.data?.messages.length ? (
+                    <p className="px-2 py-2 text-[10.5px] leading-4 text-dim">
+                      No messages match “{deferredSearch}”.
+                    </p>
+                  ) : (
+                    <div className="max-h-56 overflow-y-auto">
+                      {messageSearch.data.messages.map((message) => {
+                        const seat = threadById.get(String(message.thread));
+                        return (
+                          <button
+                            key={message.id}
+                            type="button"
+                            onClick={() => openSearchResult(message)}
+                            className="flex w-full items-start gap-2.5 rounded-[10px] px-2 py-2 text-left transition hover:bg-[color-mix(in_srgb,var(--ink)_4%,transparent)]"
+                          >
+                            <Avatar user={message.sender} size={30} />
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-baseline gap-1.5">
+                                <span className="min-w-0 flex-1 truncate text-[11.5px] font-bold">
+                                  {seat ? threadTitle(seat) : message.sender?.name || message.sender?.username || "Conversation"}
+                                </span>
+                                <span className="shrink-0 text-[9px] tabular-nums text-dim">
+                                  {stamp(message.created_at)}
+                                </span>
+                              </span>
+                              <span className="mt-0.5 block line-clamp-2 text-[10.5px] leading-4 text-dim">
+                                {message.body || message.asset?.original_name || `${message.kind} message`}
+                              </span>
+                              <span className="mt-0.5 block text-[9px] font-semibold text-accent">
+                                {message.sender?.name || message.sender?.username}
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ) : null}
             </div>
           </div>
         </div>

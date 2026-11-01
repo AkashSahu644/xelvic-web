@@ -1,5 +1,5 @@
 ﻿import { useRef, type KeyboardEvent, type PointerEvent } from "react";
-import { Flame, Play, Users } from "lucide-react";
+import { Flame, Users } from "lucide-react";
 import { Avatar } from "@/components/Avatar";
 import { cn } from "@/lib/cn";
 import type { Spark, ThreadCard } from "@/types/api";
@@ -73,8 +73,8 @@ function SparkChip({
       }}
       title={
         spark.stage
-          ? `${spark.count ?? 0} days Â· ${spark.stage.name ?? "Spark"}`
-          : `${spark.count ?? 0} days Â· Spark`
+          ? `${spark.count ?? 0} days · ${spark.stage.name ?? "Spark"}`
+          : `${spark.count ?? 0} days · Spark`
       }
       aria-label="Open spark"
       className="flex size-[22px] shrink-0 items-center justify-center transition hover:scale-105"
@@ -116,14 +116,7 @@ export function ConvoRow({
   const unread = thread.unread_count ?? thread.unread ?? 0;
   const hot = unread > 0;
   const marked = hot || active;
-  const raw = threadLine(thread, unread);
-  const line = hot
-    ? `${unread} new`
-    : raw === "Opened" || thread.status === "Opened"
-      ? "Opened"
-      : raw === "Sent" || thread.status === "Sent"
-        ? "Sent"
-        : "Nothing new";
+  const line = threadLine(thread, unread);
   const opened = line === "Opened";
   const group = thread.kind === "group";
   const username = face?.username;
@@ -240,18 +233,12 @@ export function ConvoRow({
         </span>
         <div className="flex items-center gap-2">
           {unread ? (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onOpen();
-              }}
-              className="flex size-[22px] items-center justify-center rounded-full bg-accent text-on-accent transition hover:brightness-105"
-              aria-label={`Open ${title}`}
+            <span
+              className="flex h-[20px] min-w-[20px] items-center justify-center rounded-full bg-accent px-1.5 text-[10.5px] font-bold tabular-nums text-on-accent"
+              aria-label={`${unread} unread`}
             >
-              <Play className="ml-[1px] size-3 fill-current" strokeWidth={0} />
-            </button>
+              {unread > 99 ? "99+" : unread}
+            </span>
           ) : null}
           {spark && (spark.alive || spark.laps) && onOpenSpark ? (
             <SparkChip spark={spark} onOpen={onOpenSpark} />

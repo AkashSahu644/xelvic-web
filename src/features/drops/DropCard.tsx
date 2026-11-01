@@ -1,425 +1,825 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Bookmark,
-  Ellipsis,
-  EyeOff,
+  EllipsisVertical,
   Heart,
+  ImageOff,
   MapPin,
   MessageCircle,
+  Pause,
   Play,
   Share2,
-  Trash2,
+  Tag,
   Volume2,
 } from "lucide-react";
 import { Avatar } from "@/components/Avatar";
 import { AuthedImage, AuthedVideo } from "@/components/Media";
+import { Modal } from "@/components/Modal";
+import { VerifiedTick } from "@/components/Tick";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { count, duration, relativeTime } from "@/lib/format";
+import { count, duration, timeAgoShort } from "@/lib/format";
 import { errorMessage } from "@/lib/errors";
 import { usePlayer } from "@/providers/PlayerProvider";
 import { useToast } from "@/providers/ToastProvider";
-import { CommentsModal } from "@/features/drops/CommentsModal";
-import type { Drop, Poll } from "@/types/api";
+import { CommentsModal } from "./CommentsModal";
+import { DropMenu } from "./DropMenu";
+import { KeepButton } from "./KeepButton";
+import { PollBlock } from "./PollBlock";
+import { SensitiveVeil } from "./SensitiveVeil";
+import { ShareSheet } from "./ShareSheet";
+import { StatsSheet } from "./StatsSheet";
+import {
+  dropBase,
+  dropIsGallery,
+  dropIsPoll,
+  dropIsSound,
+  dropIsVibe,
+  dropPictures,
+  dropStill,
+  reportDropLook,
+} from "./model";
+import { savedKindOf, useSaved } from "@/features/saved/store";
+import type { Asset, Drop, Poll, UserCard } from "@/types/api";
 
-function ActionButton({
-  active,
-  label,
-  children,
-  onClick,
-  disabled,
-}: {
-  active?: boolean;
-  label: string;
-  children: ReactNode;
-  onClick?: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-      className={cn(
-        "inline-flex min-h-8 items-center gap-1.5 rounded-full px-1.5 text-[11px] font-bold transition disabled:opacity-50",
-        active ? "text-accent" : "text-dim hover:text-ink",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-function PollBlock({ drop }: { drop: Drop }) {
-  const [poll, setPoll] = useState<Poll | null>(drop.poll ?? null);
-  const [busy, setBusy] = useState(false);
-  const { toast } = useToast();
-
-  useEffect(() => {
-    setPoll(drop.poll ?? null);
-  }, [drop.poll]);
-
-  if (!poll) return null;
-  const total = poll.votes ?? poll.options.reduce((sum, option) => sum + (option.votes ?? 0), 0);
-  const picked = new Set(poll.options.filter((option) => option.mine).map((option) => option.id));
-  const showResults = Boolean(poll.results || poll.closed || picked.size);
-
-  async function vote(optionId: string) {
-    if (busy || poll?.closed) return;
-    const next = new Set(picked);
-    if (poll?.multiple) {
-      if (next.has(optionId)) next.delete(optionId);
-      else next.add(optionId);
-    } else {
-      if (next.has(optionId)) next.clear();
-      else {
-        next.clear();
-        next.add(optionId);
-      }
-    }
-    setBusy(true);
-    try {
-      const response = await api.post<{ poll: Poll }>(`/drops/${drop.id}/poll/vote/`, {
-        options: Array.from(next),
-      });
-      setPoll(response.poll);
-    } catch (error) {
-      toast({ title: "Your answer did not go through", description: errorMessage(error), tone: "error" });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="mt-3 space-y-1.5">
-      {poll.options.map((option) => {
-        const votes = option.votes ?? 0;
-        const share = total ? Math.round((votes / total) * 100) : 0;
-        const mine = picked.has(option.id);
-        return (
-          <button
-            key={option.id}
-            type="button"
-            onClick={() => void vote(option.id)}
-            disabled={busy || poll.closed}
-            className={cn(
-              "relative block w-full overflow-hidden rounded-[10px] border px-3 py-2.5 text-left transition",
-              mine ? "border-accent" : "border-line hover:border-[color-mix(in_srgb,var(--accent)_35%,var(--line))]",
-              poll.closed && "cursor-default",
-            )}
-          >
-            {showResults ? (
-              <span
-                className={cn(
-                  "absolute inset-y-0 left-0 transition-[width] duration-300",
-                  mine ? "bg-[color-mix(in_srgb,var(--accent)_16%,transparent)]" : "bg-[color-mix(in_srgb,var(--ink)_5%,transparent)]",
-                )}
-                style={{ width: `${share}%` }}
-                aria-hidden
-              />
-            ) : null}
-            <span className="relative flex items-center gap-2">
-              <span className={cn("flex size-4 shrink-0 items-center justify-center rounded-full border", mine ? "border-accent bg-accent text-on-accent" : "border-line")}>
-                {mine ? <span className="size-1.5 rounded-full bg-current" /> : null}
-              </span>
-              <span className="min-w-0 flex-1 text-[12.5px] font-semibold">{option.text}</span>
-              {showResults ? <span className="num text-[11px] font-bold text-dim">{share}%</span> : null}
-            </span>
-          </button>
-        );
-      })}
-      <p className="pt-0.5 text-[10px] text-dim">
-        {count(total)} {total === 1 ? "answer" : "answers"}
-        {poll.closed ? " · closed" : poll.multiple ? " · pick more than one" : ""}
-      </p>
-    </div>
-  );
-}
-
+/**
+ * One drop, drawn the way `DropCard` in `screens/drops.dart` draws it.
+ *
+ * The card's own order is the app's and is the whole of its argument: the
+ * header, then the words, then *who the words name*, then the thing itself —
+ * a poll's answers, a picture, a sound — then the sound's playlists, then the
+ * row of acts, then the first respond, then the stamp. Nothing here was placed
+ * by taste; see `build` in the app for the same list in the same order.
+ *
+ * Three of the app's behaviours are wired to be the same behaviour rather than
+ * a look-alike:
+ *
+ * - **A look is counted from the card that filled the eye.** `Drop.seen` in the
+ *   app, and the web had no equivalent at all — which is why every post's
+ *   Views number was the count of people who had opened it in the phone app.
+ *   The observer at the foot of this file reports a look once, when most of the
+ *   card has been on screen, and `reportDropLook` keeps the once-a-day rule and
+ *   the "never my own" rule that the app keeps.
+ * - **A like is the same call from the button and from the double tap.** Two
+ *   doors onto one `POST`, never two states to keep in step — and the heart that
+ *   flies up is drawn from the same answer the button's count comes from.
+ * - **A marked post is covered until it is opened**, from the server's own
+ *   `sensitive`/`openable` pair rather than from a setting guessed here. See
+ *   `SensitiveVeil`.
+ */
 export function DropCard({
-  drop,
+  drop: incoming,
   onRemoved,
   onSavedChange,
+  onChanged,
   detailed,
+  asPost,
 }: {
   drop: Drop;
+  /** It is gone from this reader's feed — hidden, or taken down by its author. */
   onRemoved?: (id: string) => void;
   onSavedChange?: (id: string, saved: boolean) => void;
+  /** Something about this row changed and the list should ask again. */
+  onChanged?: () => void;
+  /** A drop's own page: every word of it, none of it folded. */
   detailed?: boolean;
+  /**
+   * Whether this card is being *read* rather than scrolled past.
+   *
+   * The app folds a long post where it is read and leaves it whole where it is
+   * scrolled past — `ReadMoreText` and `asPost` — because a feed of folded posts
+   * is a feed nobody has to open, and a post nobody can finish on its own page
+   * is a post whose page has no reason to exist.
+   */
+  asPost?: boolean;
 }) {
-  const [liked, setLiked] = useState(Boolean(drop.liked));
-  const [likes, setLikes] = useState(drop.likes ?? 0);
-  const [saved, setSaved] = useState(Boolean(drop.saved));
-  const [saves, setSaves] = useState(drop.saves ?? 0);
-  const [comments, setComments] = useState(drop.comments ?? 0);
+  const [drop, setDrop] = useState(incoming);
+  const [liked, setLiked] = useState(Boolean(incoming.liked));
+  const [likes, setLikes] = useState(incoming.likes ?? 0);
+  const [comments, setComments] = useState(incoming.comments ?? 0);
+  const [shares, setShares] = useState(incoming.shares ?? 0);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [busy, setBusy] = useState<string | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [whoOpen, setWhoOpen] = useState(false);
+  const [boom, setBoom] = useState(false);
   const { toast } = useToast();
   const player = usePlayer();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
+  const { has, toggle: toggleSaved } = useSaved();
+  const saved = has(savedKindOf(drop), drop.id);
+
+  // A card in a list is reused when the list changes under it, so everything
+  // this card keeps of its own is re-seeded from the row it was handed — the
+  // app does the same in `didUpdateWidget`.
   useEffect(() => {
-    setLiked(Boolean(drop.liked));
-    setLikes(drop.likes ?? 0);
-    setSaved(Boolean(drop.saved));
-    setSaves(drop.saves ?? 0);
-    setComments(drop.comments ?? 0);
-  }, [drop.id, drop.liked, drop.likes, drop.saved, drop.saves, drop.comments]);
+    setDrop(incoming);
+    setLiked(Boolean(incoming.liked));
+    setLikes(incoming.likes ?? 0);
+    setComments(incoming.comments ?? 0);
+    setShares(incoming.shares ?? 0);
+  }, [incoming]);
 
+  const pictures = dropPictures(drop);
+  const gallery = dropIsGallery(drop);
+  const soundtrack = drop.soundtrack;
+
+  /**
+   * Report a look when this card is the one filling the eye.
+   *
+   * Once per card mount, from the observer below, and the rules that make it a
+   * *look* rather than a page impression — never my own post, one a day — are
+   * kept in `reportDropLook` beside the address they act on.
+   */
+  const seen = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (!menuOpen) return;
-    const close = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
-  }, [menuOpen]);
+    const node = seen.current;
+    if (!node) return;
+    let done = false;
+    const watcher = new IntersectionObserver(
+      (entries) => {
+        if (done) return;
+        const entry = entries[0];
+        if (!entry?.isIntersecting) return;
+        if (entry.intersectionRatio < 0.6) return;
+        done = true;
+        void reportDropLook(drop);
+        watcher.disconnect();
+      },
+      { threshold: [0.6] },
+    );
+    watcher.observe(node);
+    return () => watcher.disconnect();
+  }, [drop]);
 
-  async function toggleLike() {
-    const next = !liked;
-    setLiked(next);
-    setLikes((value) => Math.max(0, value + (next ? 1 : -1)));
+  async function like(next?: boolean) {
+    const want = next ?? !liked;
+    if (want === liked) return;
+    setLiked(want);
+    setLikes((value) => Math.max(0, value + (want ? 1 : -1)));
     try {
-      const response = await api.post<{ likes: number; liked: boolean }>(`/drops/${drop.id}/like/`, { on: next });
-      setLiked(response.liked);
-      setLikes(response.likes);
+      const answer = await api.post<{ likes: number; liked: boolean }>(`/${dropBase(drop)}/${drop.id}/like/`, {
+        on: want,
+      });
+      setLiked(answer.liked);
+      setLikes(answer.likes);
     } catch (error) {
-      setLiked(!next);
-      setLikes((value) => Math.max(0, value + (next ? -1 : 1)));
+      setLiked(!want);
+      setLikes((value) => Math.max(0, value + (want ? -1 : 1)));
       toast({ title: "That like did not stick", description: errorMessage(error), tone: "error" });
     }
   }
 
+  /** The double tap: the same call as the button, with a heart to say so. */
+  function doubleTap() {
+    setBoom(true);
+    window.setTimeout(() => setBoom(false), 620);
+    if (!liked) void like(true);
+  }
+
   async function toggleSave() {
-    const next = !saved;
-    setSaved(next);
-    setSaves((value) => Math.max(0, value + (next ? 1 : -1)));
-    try {
-      const response = await api.post<{ saves: number; saved: boolean }>(`/drops/${drop.id}/save/`, { on: next });
-      setSaved(response.saved);
-      setSaves(response.saves);
-      onSavedChange?.(drop.id, response.saved);
-      toast({ title: response.saved ? "Kept in saved" : "Taken out of saved", tone: "success" });
-    } catch (error) {
-      setSaved(!next);
-      setSaves((value) => Math.max(0, value + (next ? -1 : 1)));
-      toast({ title: "That did not save", description: errorMessage(error), tone: "error" });
-    }
+    const now = await toggleSaved(savedKindOf(drop), drop.id, !saved);
+    onSavedChange?.(drop.id, now);
   }
 
-  async function share() {
-    if (busy) return;
-    setBusy("share");
-    try {
-      const response = await api.post<{ link: string }>(`/drops/${drop.id}/share/`, {});
-      try {
-        await navigator.clipboard.writeText(response.link);
-        toast({ title: "Link copied", description: "It will open where the drop lives.", tone: "success" });
-      } catch {
-        toast({ title: "The link is ready", description: response.link, tone: "info" });
-      }
-    } catch (error) {
-      toast({ title: "Could not share that", description: errorMessage(error), tone: "error" });
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function remove(action: "hide" | "delete") {
-    setBusy(action);
-    setMenuOpen(false);
-    try {
-      if (action === "delete") await api.delete(`/drops/${drop.id}/`);
-      else await api.post(`/drops/${drop.id}/hide/`, { on: true });
-      onRemoved?.(drop.id);
-      toast({ title: action === "delete" ? "Drop deleted" : "Drop hidden", tone: "success" });
-    } catch (error) {
-      toast({ title: "That did not work", description: errorMessage(error), tone: "error" });
-    } finally {
-      setBusy(null);
-    }
-  }
-
+  /**
+   * The sound this card plays, in the app's own two shapes.
+   *
+   * A sound drop is its audio and nothing else, and the row the card draws for
+   * it is the whole of the card. The music a *picture* drop carries is a
+   * different thing: it is worn on the photograph, plays while the card is the
+   * one on screen, and stops when the reader scrolls past. Both go through this
+   * account's one player, so a sound started here is what the bar at the foot of
+   * the page is holding.
+   */
   function playSound() {
-    if (!drop.asset?.content_url) return;
+    const url = drop.asset?.content_url;
+    if (!url) {
+      toast({ title: "The audio is not here any more.", tone: "error" });
+      return;
+    }
     player.play({
       id: drop.id,
-      title: drop.body || "A drop",
+      title: drop.title?.trim() || "Audio",
       artist: drop.author.name || drop.author.username,
-      stream_url: drop.asset.content_url,
-      cover_url: drop.author.avatar,
-      seconds: drop.asset.duration_ms ? Math.round(drop.asset.duration_ms / 1000) : undefined,
+      stream_url: url,
+      cover_url: drop.cover?.content_url || drop.author.avatar,
+      seconds: drop.asset?.duration_ms ? Math.round(drop.asset.duration_ms / 1000) : undefined,
     });
   }
 
-  const image = drop.asset && (drop.asset.kind === "image" || /image/.test(drop.asset.mime ?? ""));
-  const video = drop.asset && (drop.asset.kind === "video" || /video/.test(drop.asset.mime ?? ""));
-  const audio = drop.asset && (drop.asset.kind === "audio" || drop.asset.kind === "voice" || /audio/.test(drop.asset.mime ?? ""));
-  const text = drop.body || "";
+  function playSoundtrack() {
+    if (!soundtrack?.content_url) return;
+    player.play({
+      id: `soundtrack:${drop.id}`,
+      title: drop.author.name || drop.author.username,
+      artist: "Original audio",
+      stream_url: soundtrack.content_url,
+      cover_url: drop.author.avatar,
+      seconds: soundtrack.duration_ms ? Math.round(soundtrack.duration_ms / 1000) : undefined,
+    });
+  }
+
+  const soundtrackPlaying = player.current?.id === `soundtrack:${drop.id}` && player.playing;
+  const soundPlaying = player.current?.id === drop.id && player.playing;
+  const name = drop.author.name || drop.author.username;
+  const poll: Poll | null = drop.poll ?? null;
 
   return (
     <article
+      ref={seen}
       className={cn(
         "card overflow-hidden transition duration-200",
         detailed ? "rounded-[20px]" : "hover:shadow-[0_12px_32px_rgb(19_19_26_/_0.06)]",
       )}
     >
-      <header className="flex items-start gap-3 px-4 pt-4">
-        <Link to={`/app/u/${drop.author.username}`} className="shrink-0">
-          <Avatar user={drop.author} size={40} online={drop.author.online} />
+      <header className="flex items-center gap-3 px-4 pt-3 pb-2.5">
+        <Link to={`/app/u/${drop.author.username}`} className="shrink-0" aria-label={name}>
+          <Avatar user={drop.author} size={40} />
         </Link>
         <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-1.5">
-            <Link to={`/app/u/${drop.author.username}`} className="truncate text-[13px] font-extrabold hover:underline">
-              {drop.author.name || drop.author.username}
+          <div className="flex items-center gap-1">
+            <Link
+              to={`/app/u/${drop.author.username}`}
+              className="truncate text-[14px] font-bold tracking-[-0.1px] hover:underline"
+            >
+              {name}
             </Link>
-            {drop.collab && Array.isArray(drop.collab.people) && drop.collab.people.length ? (
-              <span className="truncate text-[10.5px] text-dim">
-                with {drop.collab.people.map((person) => person.name || person.username).join(", ")}
-              </span>
-            ) : null}
+            {drop.author.verified ? <VerifiedTick size={13} /> : null}
           </div>
-          <p className="truncate text-[10.5px] text-dim">
-            @{drop.author.username} · <Link to={`/app/drops/${drop.id}`} className="hover:underline">{relativeTime(drop.created_at)}</Link>
-            {drop.place ? (
-              <span className="inline-flex items-center gap-1"> · <MapPin className="size-2.5" aria-hidden />{drop.place}</span>
-            ) : null}
-          </p>
-        </div>
-        {drop.tag ? (
-          <span className="mt-0.5 shrink-0 rounded-full bg-[var(--accent-soft)] px-2 py-1 text-[9px] font-extrabold uppercase tracking-wide text-accent">
-            {drop.tag}
-          </span>
-        ) : null}
-        <div className="relative" ref={menuRef}>
-          <button
-            type="button"
-            className="icon-btn -mr-2 -mt-1.5 size-9"
-            onClick={() => setMenuOpen((value) => !value)}
-            aria-label="Drop options"
-            aria-expanded={menuOpen}
-          >
-            <Ellipsis className="size-4" />
-          </button>
-          {menuOpen ? (
-            <div className="absolute right-0 top-8 z-20 w-44 overflow-hidden rounded-[12px] border border-line bg-card p-1 shadow-xl">
-              <button
-                type="button"
-                onClick={() => void remove("hide")}
-                className="flex w-full items-center gap-2 rounded-[8px] px-2.5 py-2 text-left text-[11.5px] font-semibold text-dim hover:bg-[color-mix(in_srgb,var(--ink)_5%,transparent)] hover:text-ink"
-              >
-                <EyeOff className="size-3.5" /> Hide from my feed
-              </button>
-              {drop.mine ? (
-                <button
-                  type="button"
-                  onClick={() => void remove("delete")}
-                  className="flex w-full items-center gap-2 rounded-[8px] px-2.5 py-2 text-left text-[11.5px] font-semibold text-[var(--bad)] hover:bg-[color-mix(in_srgb,var(--bad)_8%,transparent)]"
-                >
-                  <Trash2 className="size-3.5" /> Delete drop
-                </button>
-              ) : null}
-            </div>
+          {/* The second line is drawn only when there is something on it: a drop
+              with no place has no second line rather than an empty one. */}
+          {drop.place ? (
+            <p className="mt-px flex items-center gap-1 truncate text-[11.5px] text-dim">
+              <MapPin className="size-3 shrink-0" aria-hidden />
+              {drop.place}
+            </p>
+          ) : null}
+          {/* A line of its own, because "with Aarav and 2 others" is longer than
+              the stamp it would sit beside and the one thing it may not do is
+              push anything else off the card. */}
+          {drop.collab?.people?.length ? (
+            <p className="mt-0.5 truncate text-[11.5px] text-dim">
+              with {drop.collab.people.map((person) => person.name || person.username).join(", ")}
+            </p>
           ) : null}
         </div>
+        {/* The invitation stands to the left of the ⋮, and only where it is an
+            invitation rather than a repeat. `author_kept` is `null` when the
+            page did not say, which draws nothing. */}
+        {!drop.mine && drop.author_kept === false ? <KeepButton author={drop.author} known /> : null}
+        <button
+          type="button"
+          onClick={() => setMenuOpen(true)}
+          className="icon-btn -mr-2 size-9"
+          aria-label="Post options"
+        >
+          <EllipsisVertical className="size-4" />
+        </button>
       </header>
 
-      {text ? (
-        <p className={cn("whitespace-pre-wrap break-words px-4 pt-3 text-[14px] leading-[1.65] text-ink/95", !detailed && "line-clamp-[8]")}>
-          {text}
-        </p>
-      ) : null}
-
-      {drop.asset && (image || video) ? (
-        <div className="mt-3 px-4">
-          <div
-            className="overflow-hidden rounded-[14px] bg-[color-mix(in_srgb,var(--ink)_5%,transparent)]"
-            style={drop.ratio && !video ? { aspectRatio: `1 / ${drop.ratio}` } : video ? { aspectRatio: `1 / ${drop.ratio || 1.25}` } : undefined}
-          >
-            {video ? (
-              <AuthedVideo src={drop.asset.content_url} controls className="h-full w-full" />
-            ) : (
-              <AuthedImage
-                src={drop.asset.content_url}
-                alt={drop.body ? `Photo from ${drop.author.name}` : "Drop photo"}
-                className="h-full w-full"
-                loading="lazy"
-              />
-            )}
-          </div>
+      {drop.body?.trim() ? (
+        <div className="px-4 pb-2.5">
+          <Words body={drop.body} asPost={Boolean(asPost)} poll={dropIsPoll(drop)} />
         </div>
       ) : null}
 
-      {drop.asset && audio ? (
-        <div className="mt-3 px-4">
-          <button
-            type="button"
-            onClick={playSound}
-            className="flex w-full items-center gap-3 rounded-[14px] border border-line bg-paper px-3 py-3 text-left transition hover:border-accent/40"
-          >
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent">
-              <Volume2 className="size-4" />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[12px] font-bold">{drop.asset.original_name || "Sound on this drop"}</span>
-              <span className="block text-[10px] text-dim">
-                {drop.asset.duration_ms ? duration(drop.asset.duration_ms / 1000) : "Play in the audio bar"}
-              </span>
-            </span>
-            <Play className="size-4 text-dim" aria-hidden />
-          </button>
+      {/* Who it names, under what it says and above what it shows: the line
+          belongs to the words and reads as part of them. */}
+      {drop.mentions?.length ? (
+        <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 px-4 pb-2.5">
+          {drop.mentions.map((person) => (
+            <Link
+              key={person.id}
+              to={`/app/u/${person.username}`}
+              className="max-w-full truncate text-[13px] font-semibold text-accent hover:underline"
+            >
+              @{person.username}
+            </Link>
+          ))}
         </div>
       ) : null}
 
-      {drop.poll ? (
-        <div className="px-4">
-          <PollBlock drop={drop} />
+      {poll ? (
+        <PollBlock
+          drop={drop}
+          poll={poll}
+          onPoll={(next) => {
+            setDrop((current) => ({ ...current, poll: next }));
+            onChanged?.();
+          }}
+        />
+      ) : null}
+
+      {drop.asset && pictures.length && !dropIsSound(drop) ? (
+        <Media
+          drop={drop}
+          pictures={pictures}
+          gallery={gallery}
+          boom={boom}
+          soundtrackPlaying={soundtrackPlaying}
+          onDoubleTap={doubleTap}
+          onSoundtrack={playSoundtrack}
+          onWho={() => setWhoOpen(true)}
+        />
+      ) : null}
+
+      {dropIsSound(drop) ? <SoundCard drop={drop} playing={soundPlaying} onPlay={playSound} /> : null}
+
+      {dropIsSound(drop) && drop.shelves?.length ? (
+        <div className="flex flex-wrap gap-2 px-3.5 pb-2">
+          {drop.shelves.map((shelf) => (
+            <Link
+              key={shelf.id}
+              to={`/app/audio/${shelf.id}`}
+              className="flex max-w-[190px] items-center gap-1.5 rounded-full bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] px-2.5 py-1.5 text-[12.5px] font-bold text-accent"
+            >
+              <Volume2 className="size-[15px] shrink-0" aria-hidden />
+              <span className="truncate">{shelf.name}</span>
+            </Link>
+          ))}
         </div>
       ) : null}
+
+      {/* The row of acts: three counts and a bookmark, which is the one of the
+          four that reaches nobody and is counted by no one. */}
+      <div className="flex items-center px-1.5 pb-0.5 pt-1.5">
+        <Act
+          label="Felt"
+          count={drop.likes_off ? null : likes}
+          on={liked}
+          onClick={() => void like()}
+          glyph={<Heart className={cn("size-[19px]", liked && "fill-current")} />}
+        />
+        <Act
+          label="Comments"
+          count={comments}
+          onClick={() => setCommentsOpen(true)}
+          glyph={<MessageCircle className="size-[19px]" />}
+        />
+        <Act
+          label="Share"
+          count={shares}
+          onClick={() => setShareOpen(true)}
+          glyph={<Share2 className="size-[19px]" />}
+        />
+        <Act
+          label={saved ? "Saved" : "Save"}
+          on={saved}
+          onClick={() => void toggleSave()}
+          glyph={<Bookmark className={cn("size-[19px]", saved && "fill-current")} />}
+        />
+      </div>
 
       {drop.peek ? (
         <button
           type="button"
           onClick={() => setCommentsOpen(true)}
-          className="mx-4 mt-3 flex w-[calc(100%-2rem)] items-start gap-2 rounded-[10px] px-2 py-2 text-left transition hover:bg-[color-mix(in_srgb,var(--ink)_4%,transparent)]"
+          className="flex w-full items-center gap-2.5 px-4 pb-2 pt-1 text-left transition hover:bg-[color-mix(in_srgb,var(--ink)_3%,transparent)]"
         >
-          <Avatar user={drop.peek.author} size={22} />
-          <span className="min-w-0 flex-1 text-[11px] leading-5 text-dim">
-            <span className="font-extrabold text-ink">{drop.peek.author.name || drop.peek.author.username}</span>{" "}
+          <Avatar user={drop.peek.author} size={28} />
+          <span className="min-w-0 flex-1 text-[12.5px] leading-[1.35] text-dim">
+            <span className="font-bold text-ink">{nameOf(drop.peek.author)} </span>
+            {drop.peek.author.verified ? <VerifiedTick size={12} /> : null}
             <span className="line-clamp-2">{drop.peek.body}</span>
           </span>
+          <span className="num shrink-0 text-[11px] text-dim">{commentWord(comments)}</span>
         </button>
       ) : null}
 
-      <footer className="mt-2 flex items-center gap-1 px-4 pb-4">
-        <ActionButton active={liked} label={liked ? "Remove like" : "Like this drop"} onClick={() => void toggleLike()}>
-          <Heart className={cn("size-[17px]", liked && "fill-current")} />
-          <span className="num">{count(likes)}</span>
-        </ActionButton>
-        <ActionButton label="Read and write responds" onClick={() => setCommentsOpen(true)}>
-          <MessageCircle className="size-[17px]" />
-          <span className="num">{count(comments)}</span>
-        </ActionButton>
-        <ActionButton label="Share this drop" onClick={() => void share()} disabled={busy === "share"}>
-          <Share2 className="size-[17px]" />
-          <span className="num">{count(drop.shares)}</span>
-        </ActionButton>
-        <span className="flex-1" />
-        <ActionButton active={saved} label={saved ? "Remove from saved" : "Keep this drop"} onClick={() => void toggleSave()}>
-          <Bookmark className={cn("size-[17px]", saved && "fill-current")} />
-          <span className="num">{count(saves)}</span>
-        </ActionButton>
-      </footer>
+      {/* The stamp is the last line of the card and the only thing on it: a
+          footnote, and reading it is never the reason somebody is here. */}
+      <p className="px-4 pb-2 pt-0.5 text-[10.5px] text-[color-mix(in_srgb,var(--ink)_38%,transparent)]">
+        {timeAgoShort(drop.created_at)}
+      </p>
+
+      <DropMenu
+        drop={drop}
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        onRemoved={() => onRemoved?.(drop.id)}
+        onEdit={() => navigate(`/app/drops?edit=${drop.id}`)}
+        onStats={() => setStatsOpen(true)}
+        onChanged={() => {
+          void queryClient.invalidateQueries({ queryKey: ["drops"] });
+          onChanged?.();
+        }}
+      />
+
+      <ShareSheet
+        drop={drop}
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        onShared={() => {
+          setShares((value) => value + 1);
+          onChanged?.();
+        }}
+      />
+
+      <StatsSheet drop={drop} open={statsOpen} onClose={() => setStatsOpen(false)} />
+
+      <WhoIsIn open={whoOpen} people={drop.mentions ?? []} onClose={() => setWhoOpen(false)} />
 
       <CommentsModal
         drop={drop}
         open={commentsOpen}
         onClose={() => setCommentsOpen(false)}
-        onCommented={() => setComments((value) => value + 1)}
+        onCommented={() => {
+          setComments((value) => value + 1);
+          onChanged?.();
+        }}
       />
     </article>
+  );
+}
+
+function nameOf(user: UserCard) {
+  return user.name || user.username;
+}
+
+/** "1 comment" / "4 comments" — `dropsComments*` in the app's own words. */
+function commentWord(value: number) {
+  return value === 1 ? "1 comment" : `${count(value)} comments`;
+}
+
+/**
+ * The words, with `#tags` and `@handles` as doors.
+ *
+ * A tag opens the tag's own feed and a handle opens that person — the two things
+ * the app's `hashtagSpans` and its mention line do — and neither is invented
+ * here: `#tag` is only a link when the server has a feed for it, which is the
+ * same `/tags/{tag}/` route the app's `TagFeedScreen` reads. A `#` inside a word
+ * is left alone, because a tag is a word that starts with one.
+ */
+function Words({ body, asPost, poll }: { body: string; asPost: boolean; poll: boolean }) {
+  const nodes = useMemo(() => {
+    const out: ReactNode[] = [];
+    const pattern = /(^|\s)([#@][\p{L}\p{N}_.]{1,60})/gu;
+    let at = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(body))) {
+      const start = match.index + match[1].length;
+      if (start > at) out.push(body.slice(at, start));
+      const word = match[2];
+      const handle = word.slice(1);
+      out.push(
+        <Link
+          key={`${start}:${word}`}
+          to={word.startsWith("#") ? `/app/tags/${encodeURIComponent(handle)}` : `/app/u/${handle}`}
+          className="font-bold text-accent hover:underline"
+        >
+          {word}
+        </Link>,
+      );
+      at = start + word.length;
+    }
+    if (at < body.length) out.push(body.slice(at));
+    return out;
+  }, [body]);
+
+  return (
+    <p
+      className={cn(
+        "whitespace-pre-wrap break-words",
+        poll ? "text-[15.5px] font-bold" : "text-[14px]",
+        "leading-[1.5]",
+        !asPost && "line-clamp-[8]",
+      )}
+    >
+      {nodes}
+    </p>
+  );
+}
+
+/** One button in the row under a post: a mark, a count, and a word when it is on. */
+function Act({
+  label,
+  count: value,
+  on,
+  onClick,
+  glyph,
+}: {
+  label: string;
+  count?: number | null;
+  on?: boolean;
+  onClick: () => void;
+  glyph: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={value === null || value === undefined ? label : `${label}, ${value}`}
+      className={cn(
+        "inline-flex min-h-9 items-center gap-1.5 rounded-[20px] px-2.5 py-1.5 text-[12.5px] font-bold transition",
+        on ? "text-accent" : "text-dim hover:text-ink",
+      )}
+    >
+      {glyph}
+      {value === null || value === undefined ? (
+        on ? <span className="text-accent">{label}</span> : null
+      ) : (
+        <span className="num">{count(value)}</span>
+      )}
+    </button>
+  );
+}
+
+/**
+ * The picture, the clip, or the run of pictures — with the marks that belong on
+ * the picture itself.
+ *
+ * The app's *tag* pill is drawn on the photograph rather than beside it, because
+ * the tag is about the picture and not about the post; so is the music a picture
+ * drop carries, which is played from the picture's own lower edge rather than
+ * from a second player card under it. A marked post puts all of this behind the
+ * veil: nothing inside is built until the cover is lifted, which is why a
+ * covered card never fetches the full upload.
+ *
+ * The shape is reserved from the first frame from the server's own `ratio`, so a
+ * feed whose pictures are still arriving does not jump under somebody's finger.
+ */
+function Media({
+  drop,
+  pictures,
+  gallery,
+  boom,
+  soundtrackPlaying,
+  onDoubleTap,
+  onSoundtrack,
+  onWho,
+}: {
+  drop: Drop;
+  pictures: Asset[];
+  gallery: boolean;
+  boom: boolean;
+  soundtrackPlaying: boolean;
+  onDoubleTap: () => void;
+  onSoundtrack: () => void;
+  onWho: () => void;
+}) {
+  const [page, setPage] = useState(0);
+  const strip = useRef<HTMLDivElement | null>(null);
+
+  const taps = drop.mentions?.length ? drop.mentions.length : 0;
+  const clip = !gallery && (drop.kind === "video" || dropIsVibe(drop)) && drop.asset?.content_url;
+
+  function go(next: number) {
+    const node = strip.current;
+    if (!node) return;
+    node.scrollTo({ left: node.clientWidth * next, behavior: "smooth" });
+  }
+
+  const veilNote = drop.mine ? "Yours. Everybody else sees it covered." : null;
+
+  return (
+    <SensitiveVeil
+      sensitive={drop.sensitive}
+      openable={drop.openable}
+      cover={dropStill(drop)}
+      note={veilNote}
+      hideable
+      aspect={drop.ratio ?? undefined}
+    >
+      <div className="relative mt-1">
+        <div
+          className="relative overflow-hidden bg-[color-mix(in_srgb,var(--ink)_5%,transparent)]"
+          style={{ aspectRatio: `1 / ${drop.ratio || 1.25}` }}
+          onDoubleClick={(event) => {
+            event.preventDefault();
+            onDoubleTap();
+          }}
+        >
+          {clip ? (
+            // A clip the poster dropped as a single upload plays where the card
+            // would otherwise freeze on its poster frame. The double tap that
+            // likes is handed down rather than lost to the play/pause tap.
+            <AuthedVideo
+              src={drop.asset?.content_url ?? null}
+              className="size-full object-cover"
+              controls={false}
+              autoPlay
+              loop
+              muted={false}
+            />
+          ) : gallery ? (
+            <>
+              <div
+                ref={strip}
+                onScroll={(event) => {
+                  const node = event.currentTarget;
+                  if (!node.clientWidth) return;
+                  setPage(Math.round(node.scrollLeft / node.clientWidth));
+                }}
+                className="no-scrollbar flex size-full snap-x snap-mandatory overflow-x-auto"
+              >
+                {pictures.map((picture, index) => (
+                  <div key={`${picture.content_url}:${index}`} className="size-full shrink-0 snap-center">
+                    <AuthedImage
+                      src={picture.thumbnail_url || picture.content_url}
+                      alt={drop.body ? `Photo from ${nameOf(drop.author)}` : "Photo"}
+                      className="size-full object-cover"
+                    />
+                  </div>
+                ))}
+              </div>
+              {pictures.length > 1 ? (
+                <div className="pointer-events-none absolute inset-x-0 bottom-2.5 flex justify-center gap-1.5">
+                  {pictures.map((_, index) => (
+                    <span
+                      key={`dot:${index}`}
+                      className={cn(
+                        "size-1.5 rounded-full bg-white transition",
+                        page === index ? "opacity-100" : "opacity-45",
+                      )}
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {page > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => go(page - 1)}
+                  aria-label="Previous picture"
+                  className="absolute inset-y-0 left-0 w-10"
+                />
+              ) : null}
+              {page < pictures.length - 1 ? (
+                <button
+                  type="button"
+                  onClick={() => go(page + 1)}
+                  aria-label="Next picture"
+                  className="absolute inset-y-0 right-0 w-10"
+                />
+              ) : null}
+            </>
+          ) : drop.asset?.content_url ? (
+            <AuthedImage
+              src={drop.asset.content_url}
+              alt={drop.body ? `Photo from ${nameOf(drop.author)}` : "Photo"}
+              className="size-full object-cover"
+            />
+          ) : (
+            <div className="flex size-full items-center justify-center text-dim">
+              <ImageOff className="size-7" aria-hidden />
+            </div>
+          )}
+
+          {/* A single tap on a picture that names somebody asks who is in it.
+              Only where the mention line is not already on the card — see the
+              app's `dropTagsOn`: two doors onto the same list is one too many. */}
+          {taps > 1 ? (
+            <button
+              type="button"
+              onClick={onWho}
+              aria-label="Who is in it"
+              className="absolute inset-0"
+            />
+          ) : null}
+
+          {drop.tag ? (
+            <span className="absolute left-2.5 top-2.5 flex items-center gap-1 rounded-full bg-[rgb(8_8_12_/_0.62)] px-2.5 py-1 text-[11px] font-bold text-white backdrop-blur">
+              <Tag className="size-3" aria-hidden />
+              {drop.tag}
+            </span>
+          ) : null}
+
+          {/* The music a picture drop carries, worn on the photograph: a
+              play/pause button and a very small name, with no plate behind them
+              beyond the single-tone scrim the house uses over any picture. */}
+          {drop.soundtrack?.content_url ? (
+            <button
+              type="button"
+              onClick={onSoundtrack}
+              className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-[rgb(8_8_12_/_0.42)] px-3 py-2 text-left text-white backdrop-blur-sm"
+            >
+              {soundtrackPlaying ? <Pause className="size-3.5 shrink-0" /> : <Play className="size-3.5 shrink-0" />}
+              <span className="min-w-0 flex-1 truncate text-[11.5px] font-semibold">
+                {nameOf(drop.author)} · Original audio
+              </span>
+              {drop.soundtrack.duration_ms ? (
+                <span className="num shrink-0 text-[10.5px] text-white/75">
+                  {duration(drop.soundtrack.duration_ms / 1000)}
+                </span>
+              ) : null}
+            </button>
+          ) : null}
+
+          {boom ? (
+            <span className="pointer-events-none absolute inset-0 flex items-center justify-center" aria-hidden>
+              <Heart className="size-[118px] fill-white text-white drop-shadow-[0_6px_20px_rgb(0_0_0_/_0.45)] animate-fade-up" />
+            </span>
+          ) : null}
+        </div>
+      </div>
+    </SensitiveVeil>
+  );
+}
+
+/**
+ * A drop that is nothing but sound.
+ *
+ * The cover across the top where there is one, then the name, the kind, and a
+ * full-width player — one card stretched to whatever it is given, which is what
+ * the app draws. No cover means the card opens on the name itself, because the
+ * player below already carries the big disc.
+ */
+function SoundCard({ drop, playing, onPlay }: { drop: Drop; playing: boolean; onPlay: () => void }) {
+  const still = dropStill(drop);
+  const seconds = drop.asset?.duration_ms ? drop.asset.duration_ms / 1000 : null;
+
+  return (
+    <div className="mt-1 px-2.5 pb-1.5">
+      <div className="overflow-hidden rounded-[22px] border border-line bg-card">
+        {still ? (
+          <div className="relative aspect-video">
+            <AuthedImage src={still.content_url} alt="" className="size-full object-cover" />
+            {drop.sound_kind ? (
+              <span className="absolute left-3 top-3 rounded-full bg-[rgb(8_8_12_/_0.62)] px-2.5 py-1 text-[11px] font-bold text-white backdrop-blur">
+                {soundKind(drop.sound_kind)}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="px-4 py-3.5">
+          <p className="line-clamp-2 text-[19px] font-extrabold leading-[1.2] tracking-[-0.2px]">
+            {drop.title?.trim() || "Audio"}
+          </p>
+          {!still && drop.sound_kind ? (
+            <p className="mt-1 text-[13px] font-semibold text-dim">{soundKind(drop.sound_kind)}</p>
+          ) : null}
+          <button
+            type="button"
+            onClick={onPlay}
+            className="mt-3 flex w-full items-center gap-3 rounded-[14px] bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] px-3 py-2.5 text-left"
+          >
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent">
+              {playing ? <Pause className="size-4" /> : <Play className="size-4" />}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] font-bold">
+                {playing ? "Playing" : "Play"}
+              </span>
+              <span className="block text-[11px] text-dim">
+                {seconds ? duration(seconds) : "In the audio bar"}
+              </span>
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The app's `soundKindLabel`: the server's own word for the kind of sound. */
+function soundKind(kind: string) {
+  const words: Record<string, string> = {
+    song: "Music",
+    voice: "Voice",
+    podcast: "Podcast",
+    audiobook: "Audiobook",
+    live: "Live",
+  };
+  return words[kind] ?? "Audio";
+}
+
+/** The sheet a tap on a picture opens: who the post names. `openDropTags`. */
+function WhoIsIn({
+  open,
+  people,
+  onClose,
+}: {
+  open: boolean;
+  people: UserCard[];
+  onClose: () => void;
+}) {
+  const navigate = useNavigate();
+  return (
+    <Modal open={open} onClose={onClose} title="Who is in it" size="sm">
+      <div className="pb-2">
+        {people.map((person) => (
+          <button
+            key={person.id}
+            type="button"
+            onClick={() => {
+              onClose();
+              navigate(`/app/u/${person.username}`);
+            }}
+            className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition hover:bg-[color-mix(in_srgb,var(--ink)_4%,transparent)]"
+          >
+            <Avatar user={person} size={36} />
+            <span className="min-w-0">
+              <span className="block truncate text-[15px] font-semibold">{nameOf(person)}</span>
+              <span className="block truncate text-[12px] text-dim">@{person.username}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </Modal>
   );
 }

@@ -11,7 +11,6 @@ import {
 import { WS_ORIGIN } from "@/lib/env";
 import { session } from "@/lib/session";
 import { useAuth } from "@/providers/AuthProvider";
-import { usePreferences } from "@/providers/PreferencesProvider";
 
 export type SocketStatus = "offline" | "connecting" | "live" | "reconnecting";
 
@@ -34,9 +33,6 @@ const SocketContext = createContext<SocketContextValue | null>(null);
 
 export function SocketProvider({ children }: { children: ReactNode }) {
   const { status: authStatus } = useAuth();
-  const preferences = usePreferences();
-  const preferencesRef = useRef(preferences);
-  preferencesRef.current = preferences;
   const [status, setStatus] = useState<SocketStatus>("offline");
   const socketRef = useRef<WebSocket | null>(null);
   const listeners = useRef(new Set<Listener>());
@@ -81,22 +77,13 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     socket.onmessage = (message) => {
       try {
         const frame = JSON.parse(String(message.data)) as SocketFrame;
+        // Everything a frame means is decided by whoever listens for it. This
+        // provider owns the connection — opening it, keeping it alive, putting
+        // it back — and nothing else: a sound or a notification belongs to the
+        // surface that draws the news, so that the strip over the page and the
+        // browser's own row come from one decision rather than two. See
+        // `features/notices/NoticeProvider.tsx`.
         listeners.current.forEach((listener) => listener(frame));
-        const prefs = preferencesRef.current;
-        if (!prefs.notifications) return;
-        const data = frame.data && typeof frame.data === "object" ? (frame.data as Record<string, unknown>) : {};
-        if (frame.event === "message.new") {
-          prefs.playMessageSound();
-          if (document.visibilityState !== "visible" && typeof Notification !== "undefined" && Notification.permission === "granted") {
-            const messageRow = data.message && typeof data.message === "object" ? (data.message as Record<string, unknown>) : {};
-            const text = String(messageRow.text ?? messageRow.body ?? "New message");
-            new Notification("Xelvic", { body: text.slice(0, 120), icon: `/logos/${prefs.logo || "pink"}.webp`, tag: `message-${String(data.thread_id ?? "")}` });
-          }
-        } else if (frame.event === "alert.new" && document.visibilityState !== "visible" && typeof Notification !== "undefined" && Notification.permission === "granted") {
-          const alert = data.alert && typeof data.alert === "object" ? (data.alert as Record<string, unknown>) : {};
-          const body = String(alert.body ?? "Something happened on Xelvic");
-          new Notification("Xelvic", { body: body.slice(0, 120), icon: `/logos/${prefs.logo || "pink"}.webp`, tag: `alert-${String(alert.id ?? "")}` });
-        }
       } catch {
         // A frame that is not JSON is not ours; ignore it rather than kill the socket.
       }

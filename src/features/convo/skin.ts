@@ -86,7 +86,7 @@ function alphaBlend(top: string, alpha: number, bottom: string): string {
 /**
  * Returns a hex color that reads on `ground` (white or near-black).
  */
-function inkOn(ground: string): string {
+export function inkOn(ground: string): string {
   const toRgb = (hex: string) => {
     const v = hex.replace("#", "");
     const full = v.length === 3 ? v.split("").map((p) => p + p).join("") : v;
@@ -108,51 +108,104 @@ function inkOn(ground: string): string {
 }
 
 /**
- * Conversation bubble color tokens. These mirror `convo_theme.dart`:
- * - convoBubbleWash: 20% accent over page ink (my bubble background)
- * - convoBubbleEdge: 30% accent (my bubble border)
- * - convoBubbleRun: gradient of theme tones over ink (multi-color themes)
- * - convoOutInk: text color on my bubble
- * - convoOutDim: quiet text on my bubble (78%)
- * - convoInWash: their bubble background (card or theme bubbleIn)
- * - convoInEdge: their bubble border
- * - convoInInk: text color on their bubble
- * - convoInDim: quiet text on their bubble (78%)
+ * What an open convo is coloured in, taken from the theme the account is
+ * wearing rather than from a setting of the convo's own.
+ *
+ * Ported from `convo_theme.dart` rule for rule. The owner asked on 2026-10-24
+ * for a conversation to stop carrying an accent picked per chat: *"convo theme
+ * ko uski main theme se connect kar do — pink theme hai to pink dikhe, bg multi
+ * colour hai to mere message multi colour me rahe"*. So a `tint` the server
+ * still sends is simply not read, and everything below comes off the palette.
  */
-export function convoColors(accent: string, palette: {
+export interface ConvoPalette {
+  accent: string;
+  /** The page's own ground. Every wash is mixed over this and not over nothing. */
   page: string;
   card: string;
   line: string;
+  /** The theme's word colour. */
   ink: string;
   dim: string;
-}) {
-  const pageInk = palette.ink;
+  /** The colour this theme's chats lead with, where it named one. */
+  chatTint?: string;
+  /** The theme's own colours, in their order, where it is a theme of colours. */
+  tones?: string[];
+  bubbleOut?: string;
+  bubbleOutText?: string;
+  bubbleIn?: string;
+  bubbleInText?: string;
+}
+
+/**
+ * The colour a convo leads with.
+ *
+ * The theme's own chat tint where it named one — Anime Blue and Alone do, so
+ * their chats stay the colour their drawings were measured for — and the
+ * theme's accent otherwise. `chatTint` is a theme saying what its chats are
+ * coloured; where it says nothing, the accent every other page leads with is
+ * the answer.
+ */
+export function convoAccent(palette: ConvoPalette): string {
+  return palette.chatTint ?? palette.accent;
+}
+
+/**
+ * Conversation bubble color tokens — the two washes, their edges, the inks read
+ * on them, and the run a theme of colours draws across my own bubble.
+ *
+ *   - convoBubbleWash: 20% accent over the page's ink (my bubble)
+ *   - convoBubbleEdge: 30% accent (its hairline)
+ *   - convoBubbleRun:  the theme's own colours, in order, across the bubble
+ *   - convoOutInk / convoOutDim: the words in my bubble and the quiet ones
+ *   - convoInWash / convoInEdge / convoInInk / convoInDim: their side
+ */
+export function convoColors(palette: ConvoPalette) {
+  const accent = convoAccent(palette);
+  const pageInk = palette.page;
   const card = palette.card;
   const line = palette.line;
-  const isMultiColorTheme = false; // TODO: detect from theme tones
+  const tones = palette.tones ?? [];
+  const isMultiColorTheme = tones.length > 1;
 
-  // My bubble wash: 20% accent over page ink
-  const convoBubbleWash = alphaBlend(accent, CONVO_WASH, pageInk);
-  // My bubble edge: 30% accent
-  const convoBubbleEdge = alphaBlend(accent, CONVO_EDGE, pageInk);
-  // My bubble text: readable on wash
-  const convoOutInk = inkOn(convoBubbleWash);
-  // My bubble quiet text: 78% of out ink
-  const convoOutDim = alphaBlend(convoOutInk, CONVO_DIM_ALPHA, pageInk);
+  // A named `bubble_out` is one colour said outright, and nothing is blended
+  // over it: the whole bubble is controllable from the panel, and a wash of the
+  // accent on top would be the web choosing where the theme had already spoken.
+  const convoBubbleWash = palette.bubbleOut ?? alphaBlend(accent, CONVO_WASH, pageInk);
+  const convoBubbleEdge = palette.bubbleOut ?? alphaBlend(accent, CONVO_EDGE, pageInk);
+  // The ink that reads on the ground the bubble actually got — white on a dark
+  // bubble, near black on a pale one — rather than the theme's word colour,
+  // which was chosen for the page and not for the bubble.
+  const convoOutInk = palette.bubbleOutText ?? (palette.bubbleOut ? inkOn(palette.bubbleOut) : palette.ink);
+  const convoOutDim =
+    palette.bubbleOut == null && palette.bubbleOutText == null
+      ? palette.dim
+      : alphaBlend(convoOutInk, CONVO_DIM_ALPHA, convoBubbleWash);
 
-  // Their bubble: card (or theme bubbleIn)
-  const convoInWash = card;
-  // Their bubble edge: line (or theme bubbleIn)
-  const convoInEdge = line;
-  // Their bubble text: readable on card
-  const convoInInk = inkOn(convoInWash);
-  // Their bubble quiet text: 78% of in ink
-  const convoInDim = alphaBlend(convoInInk, CONVO_DIM_ALPHA, card);
+  const convoInWash = palette.bubbleIn ?? card;
+  const convoInEdge = palette.bubbleIn ?? line;
+  const convoInInk = palette.bubbleInText ?? (palette.bubbleIn ? inkOn(palette.bubbleIn) : palette.ink);
+  const convoInDim =
+    palette.bubbleIn == null && palette.bubbleInText == null
+      ? palette.dim
+      : alphaBlend(convoInInk, CONVO_DIM_ALPHA, convoInWash);
+
+  // A run of the theme's own colours, or none for a theme that named one colour
+  // of its own. Null is deliberate and is the whole safety rule: a flat theme
+  // stays flat. Each stop is the same wash the flat bubble draws, so the panel
+  // is exactly as safe to write on; only the hue changes across it. A theme
+  // carrying a `chatTint` is the same answer from the other side — it has said
+  // in one colour what its chats are drawn in.
+  const convoBubbleRun =
+    palette.bubbleOut == null && isMultiColorTheme && palette.chatTint == null
+      ? `linear-gradient(to right, ${tones
+          .map((tone) => alphaBlend(tone, CONVO_WASH, pageInk))
+          .join(", ")})`
+      : "none";
 
   return {
     convoBubbleWash,
     convoBubbleEdge,
-    convoBubbleRun: isMultiColorTheme ? `linear-gradient(to right, ${convoBubbleWash} 0%, ${convoBubbleWash} 100%)` : "none",
+    convoBubbleRun,
     convoOutInk,
     convoOutDim,
     convoInWash,

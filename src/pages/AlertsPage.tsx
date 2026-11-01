@@ -7,6 +7,7 @@ import {
   Bell,
   Bookmark,
   Check,
+  Circle,
   Film,
   Forward,
   Grid3X3,
@@ -20,22 +21,28 @@ import {
   Radio,
   Sparkles,
   StickyNote,
+  Store,
   Trophy,
   UserPlus,
   X,
 } from "lucide-react";
 import { Avatar } from "@/components/Avatar";
-import { Button, Spinner } from "@/components/Button";
+import { Spinner } from "@/components/Button";
 import { PageHeader } from "@/components/Page";
 import { EmptyState, ErrorState } from "@/components/States";
 import { AuthedImage } from "@/components/Media";
 import { CommentsModal } from "@/features/drops/CommentsModal";
+import { inkOn } from "@/features/convo/skin";
 import { stamp } from "@/features/convo/model";
 import {
+  alertMarkLabel,
+  alertOpenLabel,
+  alertPath,
   alertQuote,
   alertSelfSpoken,
   alertSubject,
   alertTail,
+  alertTone,
   alertWho,
   dayMark,
 } from "@/features/alerts/model";
@@ -47,8 +54,8 @@ import {
   useAlerts,
 } from "@/features/alerts/useAlerts";
 import { api, apiPathFrom } from "@/lib/api";
-import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
+import { useTheme } from "@/providers/ThemeProvider";
 import { useToast } from "@/providers/ToastProvider";
 import type { Alert, AlertsPageData, Drop } from "@/types/api";
 
@@ -84,17 +91,21 @@ function KindGlyph({ alert, className }: { alert: Alert; className?: string }) {
                               ? MonitorSmartphone
                               : alert.kind === "staff"
                                 ? Megaphone
-                                : alert.kind === "achievement"
-                                  ? Trophy
-                                  : Bell;
+                                : alert.kind === "friend_moment"
+                                  ? Circle
+                                  : alert.kind === "studio"
+                                    ? Store
+                                    : alert.kind === "achievement"
+                                      ? Trophy
+                                      : Bell;
   return <Icon className={className} aria-hidden />;
 }
 
 function SubjectGlyph({ about }: { about: string }) {
-  if (about === "moment") return <Sparkles className="size-2.5" aria-hidden />;
-  if (about === "vibe") return <Film className="size-2.5" aria-hidden />;
-  if (about === "memory") return <Bookmark className="size-2.5" aria-hidden />;
-  if (about === "drop") return <Grid3X3 className="size-2.5" aria-hidden />;
+  if (about === "moment") return <Sparkles className="size-[9px]" aria-hidden />;
+  if (about === "vibe") return <Film className="size-[9px]" aria-hidden />;
+  if (about === "memory") return <Bookmark className="size-[9px]" aria-hidden />;
+  if (about === "drop") return <Grid3X3 className="size-[9px]" aria-hidden />;
   return null;
 }
 
@@ -126,36 +137,23 @@ export function AlertsPage() {
     toast({ title, description, tone });
   }
 
+  /**
+   * Go where a row points.
+   *
+   * The table itself lives in `alertPath`, beside the model, because the strip
+   * over the page and a background tab's system row ask it the same question —
+   * and a second copy here would be a second chance to send one row to two
+   * places. What stays is the one answer the table cannot give: a Memory is a
+   * subject this build has no reader for, and saying so is better than a tap
+   * that opens nothing at all.
+   */
   async function openAlert(alert: Alert) {
-    if (alert.kind === "keep_request") {
-      if (alert.actor) navigate(`/app/u/${encodeURIComponent(alert.actor.username)}`);
-      return;
-    }
-    const target = alert.target;
-    if (!target) return;
-    if (target.kind === "drop") {
-      navigate(`/app/drops/${target.id}`);
-      return;
-    }
-    if (target.kind === "vibe") {
-      navigate(`/app/drops?vibe=${encodeURIComponent(target.id)}`);
-      return;
-    }
-    if (target.kind === "moment") {
-      navigate(`/app/moments?moment=${encodeURIComponent(target.id)}`);
-      return;
-    }
-    if (target.kind === "thread") {
-      navigate(`/app/convo/${target.id}`);
-      return;
-    }
-    if (target.kind === "profile") {
-      if (alert.actor) navigate(`/app/u/${encodeURIComponent(alert.actor.username)}`);
-      return;
-    }
-    if (target.kind === "memory") {
+    if (alert.target?.kind === "memory") {
       say("Memories are not on the web yet.", "info");
+      return;
     }
+    const href = alertPath(alert);
+    if (href) navigate(href);
   }
 
   async function keepBack(alert: Alert) {
@@ -240,6 +238,27 @@ export function AlertsPage() {
     }
   }
 
+  // The app scrolls for more rather than offering a button — see `_maybeMore`
+  // and its four-hundred-point threshold — so the foot of the list is watched
+  // and the next page is asked for when it comes close to the eye. A ref to the
+  // loader rather than the loader itself, because the observer is rebuilt when
+  // the page's `next` changes and not on every render.
+  const loadMoreRef = useRef(loadMore);
+  loadMoreRef.current = loadMore;
+  const sentinel = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const node = sentinel.current;
+    if (!node || !alerts.data?.next) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void loadMoreRef.current();
+      },
+      { rootMargin: "400px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [alerts.data?.next]);
+
   const rows = alerts.data?.results ?? [];
   let above: string | null | undefined;
   const items: (string | Alert)[] = [];
@@ -303,14 +322,8 @@ export function AlertsPage() {
               ),
             )}
             {alerts.data?.next ? (
-              <div className="flex justify-center py-4">
-                {more ? (
-                  <Spinner className="size-5 text-accent" />
-                ) : (
-                  <Button variant="ghost" onClick={() => void loadMore()}>
-                    Load older
-                  </Button>
-                )}
+              <div ref={sentinel} className="flex justify-center py-4">
+                {more ? <Spinner className="size-5 text-accent" /> : null}
               </div>
             ) : null}
           </div>
@@ -349,6 +362,7 @@ function AlertBubble({
   onOpenPerson: (username: string) => void;
   onOpenCover: () => void;
 }) {
+  const { accentAt } = useTheme();
   const selfSpoken = alertSelfSpoken(alert);
   const quote = alertQuote(alert);
   const caption = covered ? "" : (alert.preview?.caption ?? "").trim();
@@ -358,69 +372,93 @@ function AlertBubble({
   const hasMark =
     alert.kind === "keep" ? alert.kept !== true : (alert.kind === "respond" || alert.kind === "note") && subjectIsPost;
 
+  // An unseen row has the accent laid over the card at the same whisper the
+  // Convo list's own paper is mixed at, so the rows that were new read as the
+  // deeper ones without a second shape. Ported from `XTheme.paper`.
   const ground = unseen
     ? "color-mix(in srgb, var(--accent) 10%, var(--card))"
     : "var(--card)";
+  // The badge's colour, off the theme's ladder rather than the single accent:
+  // this is a mark on a face saying *what* happened, and the phone's `Alert.tone`
+  // is the same index. `inkOn` answers which ink is legible on it, the same
+  // question `X.inkOn` answers on the phone.
+  const tone = accentAt(alertTone(alert));
+  const onTone = inkOn(tone);
 
   return (
     <article
       onClick={onOpen}
-      className="mb-2 flex cursor-pointer items-center gap-2.5 rounded-2xl border border-line p-2.5 transition hover:border-[color-mix(in_srgb,var(--accent)_24%,var(--line))]"
+      className="mb-2 flex cursor-pointer items-center rounded-[16px] border border-line p-2.5 transition hover:border-[color-mix(in_srgb,var(--accent)_24%,var(--line))]"
       style={{ backgroundColor: ground }}
     >
       <div className="relative flex size-12 shrink-0 items-center justify-center">
         {selfSpoken ? (
-          <span className="flex size-11 items-center justify-center rounded-full bg-[var(--accent-soft)] text-accent">
+          // The app talking about the reader's own account arrives with no actor
+          // in front of it: its own glyph stands where a face would. See
+          // `Alert.selfSpoken`.
+          <span
+            className="flex size-11 items-center justify-center rounded-full text-accent"
+            style={{ backgroundColor: "color-mix(in srgb, var(--accent) 14%, transparent)" }}
+          >
             <KindGlyph alert={alert} className="size-[22px]" />
           </span>
         ) : (
+          <Avatar
+            user={
+              alert.actor
+                ? { name: alert.actor.name, username: alert.actor.username, avatar: alert.actor.avatar ?? null }
+                : null
+            }
+            name={alertWho(alert)}
+            size={44}
+          />
+        )}
+        {/* The person's own door, under everything drawn over it, so whatever is
+            on top wins the tap. A row the app speaks about the reader's own
+            account has nobody in front of it and no profile to open. */}
+        {!selfSpoken && alert.actor ? (
           <button
             type="button"
-            className="rounded-full"
+            className="absolute inset-0 rounded-full"
             onClick={(event) => {
               event.stopPropagation();
-              if (alert.actor) onOpenPerson(alert.actor.username);
+              onOpenPerson(alert.actor!.username);
             }}
             aria-label={alertWho(alert)}
-          >
-            <Avatar
-              user={
-                alert.actor
-                  ? { name: alert.actor.name, username: alert.actor.username, avatar: alert.actor.avatar ?? null }
-                  : null
-              }
-              name={alertWho(alert)}
-              size={44}
-            />
-          </button>
-        )}
+          />
+        ) : null}
+        {/* The badge is a mark, not a door: twenty points, in its own colour of
+            the theme's ladder, ringed in the card's own ground so it reads as
+            sitting on the face rather than as a second face beside it. The door
+            that shares its corner is the twenty-eight point circle below, and
+            the two are separate shapes — see `alertMarkTapSide`. */}
         {!selfSpoken ? (
+          <span
+            className="pointer-events-none absolute bottom-0 right-0 flex size-5 items-center justify-center rounded-full"
+            style={{ backgroundColor: tone, color: onTone, border: `2px solid ${ground}` }}
+            aria-hidden
+          >
+            <KindGlyph alert={alert} className="size-[11px]" />
+          </span>
+        ) : null}
+        {!selfSpoken && hasMark ? (
           <button
             type="button"
-            disabled={!hasMark || busy}
+            disabled={busy}
             onClick={(event) => {
               event.stopPropagation();
-              if (hasMark) onMark();
+              onMark();
             }}
-            className={cn(
-              "absolute bottom-0 right-0 flex size-5 items-center justify-center rounded-full border-2 text-white transition",
-              hasMark ? "hover:brightness-110" : "cursor-default",
-            )}
-            style={{ backgroundColor: "var(--accent)", borderColor: ground }}
-            aria-label={
-              alert.kind === "note"
-                ? "Open the note"
-                : alert.kind === "keep"
-                  ? "Keep back"
-                  : "Open the comments"
-            }
+            className="absolute -bottom-1 -right-1 flex size-7 items-center justify-center rounded-full transition hover:bg-[color-mix(in_srgb,var(--ink)_8%,transparent)] disabled:opacity-60"
+            aria-label={alertMarkLabel(alert)}
+            title={alertMarkLabel(alert)}
           >
-            {busy ? <Spinner className="size-3" /> : <KindGlyph alert={alert} className="size-[11px]" />}
+            {busy ? <Spinner className="size-3.5" /> : null}
           </button>
         ) : null}
       </div>
 
-      <div className="min-w-0 flex-1 py-0.5">
+      <div className="ml-[11px] min-w-0 flex-1 px-[11px] py-2">
         <p className="text-[14px] leading-[1.35] text-ink">
           {selfSpoken ? (
             <span>{alertTail(alert)}</span>
@@ -441,7 +479,10 @@ function AlertBubble({
                 <span className="font-bold">{alertWho(alert)}</span>
               )}
               {alert.actor?.verified ? (
-                <BadgeCheck className="mx-1 inline size-3.5 -translate-y-px text-accent" aria-label="Verified" />
+                <BadgeCheck
+                  className="mr-1 inline size-[13px] -translate-y-px text-accent"
+                  aria-label="Verified"
+                />
               ) : (
                 " "
               )}
@@ -451,88 +492,131 @@ function AlertBubble({
           <span className="text-[12.5px] text-dim">{"  "}{stamp(alert.at)}</span>
         </p>
         {quote ? (
-          <p className="mt-1 line-clamp-3 text-[13.5px] leading-[1.35] text-ink">{quote}</p>
+          <p className="mt-[5px] line-clamp-3 text-[13.5px] leading-[1.35] text-ink">{quote}</p>
         ) : null}
         {caption ? <p className="mt-1 line-clamp-2 text-[12.5px] leading-[1.3] text-dim">{caption}</p> : null}
       </div>
 
+      {/* The right edge: the thing the row is *about*. One fixed portrait frame
+          cropped to it, because this is a column of thumbnails and a column
+          whose members changed shape per row would not be a column. A marked
+          still wears its cover here and is the one picture with no door of its
+          own — the veil's button is the reader's step across. */}
       {preview ? (
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            if (!covered) onOpen();
-          }}
-          className="relative shrink-0 overflow-hidden rounded-[10px] bg-[color-mix(in_srgb,var(--ink)_6%,var(--card))]"
-          style={{ width: TILE_W, height: TILE_H }}
-          aria-label={subject.label ? `Open the ${subject.label.toLowerCase()}` : "Open it"}
-        >
-          <AuthedImage
-            src={preview.thumb}
-            alt=""
-            className={cn("h-full w-full object-cover", covered && "scale-105 blur-xl")}
-          />
-          {preview.kind === "video" && !covered ? (
-            <PlayCircle className="absolute left-1/2 top-1/2 size-6 -translate-x-1/2 -translate-y-1/2 text-white drop-shadow" aria-hidden />
-          ) : null}
+        <div className="ml-2.5 flex w-[58px] shrink-0 flex-col items-center">
           {covered ? (
-            <span
-              className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/25 text-[9px] font-bold text-white"
-              role="button"
-              tabIndex={0}
-              onClick={(event) => {
-                event.stopPropagation();
-                onOpenCover();
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
+            <div
+              className="relative overflow-hidden rounded-[10px] bg-[color-mix(in_srgb,var(--ink)_6%,var(--card))]"
+              style={{ width: TILE_W, height: TILE_H }}
+            >
+              <AuthedImage src={preview.thumb} alt="" className="h-full w-full scale-105 object-cover blur-xl" />
+              <span
+                className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/25 text-[9px] font-bold text-white"
+                role="button"
+                tabIndex={0}
+                onClick={(event) => {
                   event.stopPropagation();
                   onOpenCover();
-                }
-              }}
-            >
-              <span>Sensitive</span>
-              <span className="rounded-full bg-[color-mix(in_srgb,var(--card)_95%,transparent)] px-1.5 py-0.5 text-[8.5px] font-extrabold text-ink">
-                Open
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onOpenCover();
+                  }
+                }}
+              >
+                <span>Sensitive</span>
+                <span className="rounded-full bg-[color-mix(in_srgb,var(--card)_95%,transparent)] px-1.5 py-0.5 text-[8.5px] font-extrabold text-ink">
+                  Open
+                </span>
               </span>
-            </span>
-          ) : null}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpen();
+              }}
+              className="relative overflow-hidden rounded-[10px] bg-[color-mix(in_srgb,var(--ink)_6%,var(--card))]"
+              style={{ width: TILE_W, height: TILE_H }}
+              aria-label={alertOpenLabel(alert)}
+            >
+              <AuthedImage src={preview.thumb} alt="" className="h-full w-full object-cover" />
+              {preview.kind === "video" ? (
+                <PlayCircle
+                  className="absolute left-1/2 top-1/2 size-[26px] -translate-x-1/2 -translate-y-1/2 text-white drop-shadow"
+                  aria-hidden
+                />
+              ) : null}
+            </button>
+          )}
+          {/* The word goes *under* the picture rather than over it: a tag laid
+              over the corner is capped by the tile's own width, and "Memory" in
+              a fifty-eight point tile is a tag with its last letter cut off. */}
           {subject.label ? (
-            <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-black/55 py-0.5 text-[9px] font-semibold text-white">
+            <span className="mt-[3px] flex w-[58px] items-center justify-center gap-[3px]">
               <SubjectGlyph about={alert.about} />
-              <span className="truncate">{subject.label}</span>
+              <span className="truncate text-[9.5px] font-semibold leading-[1.1] text-dim">{subject.label}</span>
             </span>
           ) : null}
-        </button>
+        </div>
       ) : null}
 
+      {/* A question is answered where it is read, at the row's far end and side by
+          side rather than stacked: two answers read level with the face they are
+          about, and a stacked pair would stand taller than the face and pull one
+          row of the list out of the line the others are read down. */}
       {alert.kind === "keep_request" ? (
-        <div className="flex shrink-0 flex-col gap-1.5" onClick={(event) => event.stopPropagation()}>
+        <div className="ml-2 flex shrink-0 items-start gap-1.5" onClick={(event) => event.stopPropagation()}>
           <button
             type="button"
             disabled={busy}
             onClick={() => onAnswer(true)}
-            className="flex size-[34px] items-center justify-center rounded-full bg-accent text-on-accent transition hover:brightness-110 disabled:opacity-60"
+            className="flex size-11 items-center justify-center rounded-full disabled:opacity-60"
             aria-label="Keep them back"
             title="Keep back"
           >
-            {busy ? <Spinner className="size-4" /> : <Check className="size-4" />}
+            <span
+              className="flex size-[34px] items-center justify-center rounded-full"
+              style={{
+                backgroundColor: "color-mix(in srgb, var(--accent) 16%, transparent)",
+                color: "var(--accent)",
+              }}
+            >
+              {busy ? <Spinner className="size-4" /> : <Check className="size-[18px]" />}
+            </span>
           </button>
           <button
             type="button"
             disabled={busy}
             onClick={() => onAnswer(false)}
-            className="flex size-[34px] items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--ink)_8%,var(--card))] text-dim transition hover:text-ink disabled:opacity-60"
+            className="flex size-11 items-center justify-center rounded-full disabled:opacity-60"
             aria-label="Not now"
             title="Not now"
           >
-            <X className="size-4" />
+            <span
+              className="flex size-[34px] items-center justify-center rounded-full"
+              style={{
+                backgroundColor: "color-mix(in srgb, var(--bad) 14%, transparent)",
+                color: "var(--bad)",
+              }}
+            >
+              <X className="size-[18px]" />
+            </span>
           </button>
         </div>
       ) : null}
 
-      {unseen ? <span className="size-[9px] shrink-0 rounded-full bg-accent" aria-label="New" /> : null}
+      {/* Whether it was new when this screen was opened: a dot at the far end,
+          level with the face, so a column of rows has its dots in a line. */}
+      {unseen ? (
+        <span className="ml-2 flex h-12 w-[9px] shrink-0 items-center justify-center">
+          <span className="size-[9px] rounded-full bg-accent" aria-hidden />
+          <span className="sr-only">New</span>
+        </span>
+      ) : null}
     </article>
   );
 }

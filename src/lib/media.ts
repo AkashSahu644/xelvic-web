@@ -11,18 +11,21 @@ interface MediaEntry {
 
 const cache = new Map<string, MediaEntry>();
 
-async function loadMedia(url: string): Promise<string> {
+/**
+ * The bytes behind a media address, through the account's own credentials.
+ *
+ * One road for every read of a private file: the token when there is one, the
+ * cookie always, and a single renewal on a 401 — the same three steps the
+ * pictures and clips in this app have always taken. It is named and exported
+ * because a *download* needs the bytes rather than an element: handing the
+ * browser a bare address to save would ask for a private file with no
+ * Authorization header at all, and would put the server's error page on disk
+ * under the picture's own name. See `DropMenu`'s "Save to gallery".
+ */
+export async function mediaBlob(url: string): Promise<Blob> {
   const absolute = mediaUrl(url);
   if (!absolute) throw new Error("No media URL");
-  if (/^(data:|blob:)/i.test(absolute)) return absolute;
-
-  // Public assets (CDN avatars, covers, etc.) must load directly. Fetching
-  // them with auth headers triggers a CORS preflight the CDN does not answer.
-  try {
-    if (!isBackendMediaPath(new URL(absolute).pathname)) return absolute;
-  } catch {
-    // Fall through to the authenticated request for malformed URLs.
-  }
+  if (/^(data:|blob:)/i.test(absolute)) return (await fetch(absolute)).blob();
 
   const requestOnce = async () => {
     const headers: Record<string, string> = {};
@@ -37,8 +40,24 @@ async function loadMedia(url: string): Promise<string> {
     if (refreshed) response = await requestOnce();
   }
   if (!response.ok) throw new Error(`Media request failed (${response.status})`);
-  const blob = await response.blob();
-  return URL.createObjectURL(blob);
+  return response.blob();
+}
+
+async function loadMedia(url: string): Promise<string> {
+  const absolute = mediaUrl(url);
+  if (!absolute) throw new Error("No media URL");
+  if (/^(data:|blob:)/i.test(absolute)) return absolute;
+
+  // Public assets (CDN avatars, covers, etc.) must load directly: an `<img>` a
+  // CDN will serve is a picture, while the same address read through `fetch`
+  // is a cross-origin request the CDN answers no CORS headers for.
+  try {
+    if (!isBackendMediaPath(new URL(absolute).pathname)) return absolute;
+  } catch {
+    // Fall through to the authenticated request for malformed URLs.
+  }
+
+  return URL.createObjectURL(await mediaBlob(absolute));
 }
 
 function entryFor(url: string): MediaEntry {

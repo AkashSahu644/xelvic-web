@@ -1,5 +1,6 @@
-import { api } from "@/lib/api";
-import { ApiError } from "@/lib/errors";
+import { api, apiUrl, refreshAccessToken } from "@/lib/api";
+import { ApiError, errorFromResponse } from "@/lib/errors";
+import { session } from "@/lib/session";
 import type { Asset } from "@/types/api";
 
 const LIMITS: Record<string, number> = {
@@ -87,6 +88,69 @@ export interface UploadOptions {
   kind?: Asset["kind"];
   voice?: boolean;
   signal?: AbortSignal;
+  /** Called with 0–100 while the file body is moving to the server. */
+  onProgress?: (percent: number) => void;
+}
+
+/**
+ * `fetch` cannot report request-body progress, so a file upload that wants a
+ * real bar has to go through XHR. Auth, error shape and the one-shot 401
+ * refresh are the same as the rest of the API client.
+ */
+function uploadWithProgress<T>(
+  form: FormData,
+  onProgress: (percent: number) => void,
+  signal?: AbortSignal,
+  attempt = 0,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", apiUrl("/chat/assets/"));
+    xhr.withCredentials = true;
+    const token = session.access();
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable || !event.total) return;
+      onProgress(Math.min(99, Math.round((event.loaded / event.total) * 100)));
+    };
+    xhr.onerror = () =>
+      reject(new ApiError("The upload could not reach the server.", {
+        status: 0,
+        code: "network",
+      }));
+    xhr.onabort = () => reject(new DOMException("Upload aborted", "AbortError"));
+    xhr.onload = () => {
+      let parsed: unknown;
+      try {
+        parsed = xhr.responseText ? JSON.parse(xhr.responseText) : undefined;
+      } catch {
+        parsed = xhr.responseText;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress(100);
+        resolve(parsed as T);
+        return;
+      }
+      const error = errorFromResponse(
+        xhr.status,
+        parsed,
+        xhr.getResponseHeader("Retry-After"),
+      );
+      if (xhr.status === 401 && attempt === 0) {
+        void refreshAccessToken().then((ok) => {
+          if (!ok) {
+            reject(error);
+            return;
+          }
+          uploadWithProgress<T>(form, onProgress, signal, 1).then(resolve, reject);
+        });
+        return;
+      }
+      reject(error);
+    };
+    signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+    xhr.send(form);
+  });
 }
 
 export async function uploadAsset(file: File, options: UploadOptions = {}): Promise<Asset> {
@@ -115,9 +179,11 @@ export async function uploadAsset(file: File, options: UploadOptions = {}): Prom
     if (facts.duration_ms) form.append("duration_ms", String(facts.duration_ms));
   }
 
-  const response = await api.form<{ asset?: Asset } & Asset>("/chat/assets/", form, {
-    signal: options.signal,
-  });
+  const response = options.onProgress
+    ? await uploadWithProgress<{ asset?: Asset } & Asset>(form, options.onProgress, options.signal)
+    : await api.form<{ asset?: Asset } & Asset>("/chat/assets/", form, {
+        signal: options.signal,
+      });
   return (response as { asset?: Asset }).asset ?? (response as Asset);
 }
 

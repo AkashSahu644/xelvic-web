@@ -1,176 +1,190 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import {
-  FileText,
-  Heart,
-  HeartOff,
-  Image as ImageIcon,
-  MessageCircle,
-  Music2,
-  Play,
-  Podcast,
-  Video,
-} from "lucide-react";
+import { CloudOff, Heart, MessageCircle } from "lucide-react";
+import { Blank } from "@/components/Blank";
 import { PageHeader, Tabs } from "@/components/Page";
-import { AuthedImage } from "@/components/Media";
-import { EmptyState, ErrorState, PageSkeleton } from "@/components/States";
 import { api } from "@/lib/api";
-import { relativeTime } from "@/lib/format";
-import type { ActivityData, ActivityThing, Drop, Track } from "@/types/api";
+import { ago } from "@/lib/format";
+import { errorMessage } from "@/lib/errors";
+import { trackLine, trackUnder } from "@/features/audio/parts";
+import { SavedRowLeading } from "@/features/saved/Leading";
+import { cardOf, kindOf } from "@/features/saved/model";
+import { usePlayer } from "@/providers/PlayerProvider";
+import { usePreferences } from "@/providers/PreferencesProvider";
+import type { ActivityData, SavedThing } from "@/types/api";
 
-type Tab = "felt" | "responded";
+/**
+ * Liked and responded: everything this account has put a heart on or left a
+ * line under, in one place.
+ *
+ * Ported from `app/lib/screens/activity.dart`. Two tabs rather than the shelf's
+ * filter row, because a like and a respond are two different things somebody
+ * did and not two kinds of one thing they kept — which is also why the two
+ * lists arrive as two lists from the server rather than being split here.
+ *
+ * **The rows have each been through the gate the thing lives behind**, exactly
+ * as the shelf's have: a like on a post whose author has since gone private is
+ * left out rather than drawn as a card that will not open. See
+ * `apps/drops/activity.py`.
+ *
+ * **Nothing is written here.** A like is taken back where it was given — on the
+ * thing itself — and this page is a record, not a second set of controls, so a
+ * tap opens the thing and there is no button to undo anything from the list.
+ * That is also why the row has no trailing glyph: the web used to draw a Play
+ * or a Heart at the end of each row, which is a control that does nothing on a
+ * page that is a record. The whole row is the tap.
+ */
 
-function labelFor(thing: ActivityThing) {
-  if (thing.drop) return thing.kind === "vibe" ? "Vibe" : "Drop";
-  if (thing.track) return thing.track.kind === "podcast" ? "Podcast" : "Song";
-  return "Thing";
-}
+/** The same tap the shelf makes, because these are the same three things. */
+function useOpen() {
+  const navigate = useNavigate();
+  const player = usePlayer();
 
-function titleFor(thing: ActivityThing) {
-  if (thing.drop) return thing.drop.mine ? "You" : thing.drop.author?.name || thing.drop.author?.username || "Somebody";
-  if (thing.track) return thing.track.kind === "podcast" ? thing.track.series || thing.track.title : thing.track.title;
-  return "";
-}
-
-function lineFor(thing: ActivityThing) {
-  if (thing.drop) return thing.drop.body?.trim() ?? "";
-  if (thing.track) {
-    if (thing.track.kind === "podcast") {
-      return [thing.track.series, thing.track.artist].filter(Boolean).join(" · ");
+  return function open(thing: SavedThing) {
+    const card = cardOf(thing);
+    if (card) {
+      // Through the one door: a clip opens in the Vibes walk, where it plays,
+      // rather than on a drop's page, which draws a still of it.
+      if (thing.kind === "vibe") navigate(`/app/drops?vibe=${encodeURIComponent(card.id)}`);
+      else navigate(`/app/drops/${card.id}`);
+      return;
     }
-    return thing.track.artist;
-  }
-  return "";
+    const track = thing.track;
+    if (track) player.play(track, [track]);
+  };
 }
 
-function Leading({ thing }: { thing: ActivityThing }) {
-  const drop: Drop | undefined = thing.drop;
-  const track: Track | undefined = thing.track;
-  const image = track?.cover_url ?? track?.cover?.thumbnail_url ?? track?.cover?.content_url ?? drop?.asset?.thumbnail_url;
+/**
+ * One liked or responded thing. The shelf's row without the bookmark — a
+ * picture, a name, a line, and what it is — because there is nothing to take
+ * off here.
+ */
+function Row({ thing, onOpen }: { thing: SavedThing; onOpen: () => void }) {
+  const { t } = usePreferences();
+  const card = cardOf(thing);
+  const track = thing.track;
 
-  if (image) {
-    return (
-      <AuthedImage
-        src={image}
-        alt=""
-        className="size-[66px] shrink-0 rounded-[18px] object-cover"
-      />
-    );
-  }
-
-  const Icon = track
-    ? track.kind === "podcast"
-      ? Podcast
-      : Music2
-    : drop?.kind === "vibe"
-      ? Play
-      : drop?.kind === "video"
-        ? Video
-        : drop?.kind === "poll"
-          ? FileText
-          : drop?.kind === "note"
-            ? FileText
-            : ImageIcon;
+  const title = track
+    ? trackLine(track)
+    : card?.mine
+      ? t("You")
+      : card?.author.name || card?.author.username || "";
+  const line = track ? trackUnder(track) : (card?.body ?? "").trim();
 
   return (
-    <span className="flex size-[66px] shrink-0 items-center justify-center rounded-[18px] bg-[color-mix(in_srgb,var(--ink)_6%,var(--card))] text-[color-mix(in_srgb,var(--ink)_34%,transparent)]">
-      <Icon className="size-[26px]" aria-hidden />
-    </span>
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex w-full items-start gap-[13px] px-3.5 py-[9px] text-left transition hover:bg-[color-mix(in_srgb,var(--ink)_4%,transparent)]"
+    >
+      <SavedRowLeading thing={thing} emptyIcon={Heart} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[15px] font-bold leading-[1.15]">{title}</span>
+        {line ? (
+          <span className="mt-[3px] line-clamp-2 block text-[13px] leading-[1.3] text-[color-mix(in_srgb,var(--ink)_72%,transparent)]">
+            {line}
+          </span>
+        ) : null}
+        <span className="mt-[5px] block text-[11.5px] font-semibold text-dim">
+          {t(kindOf(thing))} · {ago(thing.at)}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+function List({ rows, onOpen, empty }: { rows: SavedThing[]; onOpen: (thing: SavedThing) => void; empty: ReactNode }) {
+  if (!rows.length) return <>{empty}</>;
+  return (
+    <ul className="pb-8 pt-0.5">
+      {rows.map((thing, index) => (
+        <li key={`${thing.kind}-${thing.drop?.id ?? thing.vibe?.id ?? thing.track?.id ?? index}`}>
+          <Row thing={thing} onOpen={() => onOpen(thing)} />
+          {/* A hairline under every row but the last, indented past the picture
+              so it reads as one list rather than as a stack of unrelated
+              blocks — the shelf's rule, drawn the same way. */}
+          {index < rows.length - 1 ? (
+            <div className="ms-[93px] h-px bg-[color-mix(in_srgb,var(--ink)_6%,transparent)]" />
+          ) : null}
+        </li>
+      ))}
+    </ul>
   );
 }
 
 export function ActivityPage() {
-  const navigate = useNavigate();
-  const [tab, setTab] = useState<Tab>("felt");
+  const { t } = usePreferences();
+  const open = useOpen();
+  const [tab, setTab] = useState<"felt" | "responded">("felt");
+
   const activity = useQuery({
     queryKey: ["activity", "mine"],
     queryFn: () => api.get<ActivityData>("/drops/mine/activity/"),
   });
-  const rows = (tab === "felt" ? activity.data?.liked : activity.data?.said) ?? [];
 
-  function open(thing: ActivityThing) {
-    if (thing.drop) {
-      if (thing.drop.kind === "vibe" || thing.kind === "vibe") {
-        navigate(`/app/drops?vibe=${encodeURIComponent(thing.drop.id)}`);
-      } else {
-        navigate(`/app/drops/${thing.drop.id}`);
-      }
-      return;
-    }
-    if (thing.track) navigate("/app/audio");
-  }
+  const felt = activity.data?.liked ?? [];
+  const said = activity.data?.said ?? [];
+  const rows = tab === "felt" ? felt : said;
 
   return (
-    <div className="min-h-dvh pb-[calc(92px+env(safe-area-inset-bottom,0px))] md:pb-24">
-      <PageHeader title="Felt & responded" back>
+    <div className="min-h-dvh pb-[calc(92px+env(safe-area-inset-bottom,0px))] md:pb-16">
+      {/* The app's AppBar: the settings row's own words as the title, with the
+          two tabs as its bottom — so `Felt & responded` is the page and `Felt`
+          and `Responded` are the two halves of it. */}
+      <PageHeader title={t("Felt & responded")} back>
         <div className="mx-auto w-full max-w-[720px] px-3 pb-2 sm:px-4">
           <Tabs
             tabs={[
-              { key: "felt", label: "Felt" },
-              { key: "responded", label: "Responded" },
+              // No counts on the tabs: the app's `TabBar` carries bare words,
+              // and a number here would be this page answering a question the
+              // server did not ask it.
+              { key: "felt", label: t("Felt") },
+              { key: "responded", label: t("Responded") },
             ]}
             value={tab}
-            onChange={(next) => setTab(next as Tab)}
+            onChange={(next) => setTab(next as "felt" | "responded")}
           />
         </div>
       </PageHeader>
 
-      <div className="mx-auto w-full max-w-[720px] px-3 pb-8 pt-3 sm:px-4">
-        {activity.isLoading ? (
-          <PageSkeleton />
-        ) : activity.isError ? (
-          <div className="card">
-            <ErrorState error={activity.error} onRetry={() => void activity.refetch()} />
-          </div>
-        ) : !rows.length ? (
-          tab === "felt" ? (
-            <EmptyState
-              icon={<HeartOff className="size-6" />}
-              title="Nothing felt yet"
-              body="Drops, Vibes and songs you heart show up here — so you can find your way back to them."
-            />
-          ) : (
-            <EmptyState
-              icon={<MessageCircle className="size-6" />}
-              title="You have not responded anywhere"
-              body="The Drops and Vibes you leave a line on gather here."
-            />
-          )
-        ) : (
-          <div className="overflow-hidden rounded-[18px] border border-line bg-card">
-            {rows.map((thing, index) => (
-              <button
-                key={`${thing.kind}-${thing.drop?.id ?? thing.track?.id ?? index}`}
-                type="button"
-                onClick={() => open(thing)}
-                className="flex w-full items-start gap-3 border-b border-line/60 px-3.5 py-2.5 text-left transition last:border-0 hover:bg-[color-mix(in_srgb,var(--ink)_4%,transparent)]"
-              >
-                <Leading thing={thing} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[15px] font-bold leading-[1.15]">{titleFor(thing)}</span>
-                  {lineFor(thing) ? (
-                    <span className="mt-1 line-clamp-2 block text-[13px] leading-[1.3] text-[color-mix(in_srgb,var(--ink)_72%,transparent)]">
-                      {lineFor(thing)}
-                    </span>
-                  ) : null}
-                  <span className="mt-1.5 block text-[11.5px] font-semibold text-dim">
-                    {labelFor(thing)}
-                    {thing.at ? ` · ${relativeTime(thing.at)}` : ""}
-                  </span>
-                </span>
-                {thing.kind === "track" || thing.track ? (
-                  <Play className="mt-5 size-4 shrink-0 text-dim" aria-hidden />
-                ) : thing.kind === "vibe" || thing.drop?.kind === "vibe" ? (
-                  <Play className="mt-5 size-4 shrink-0 text-dim" aria-hidden />
-                ) : (
-                  <Heart className="mt-5 size-4 shrink-0 text-dim" aria-hidden />
-                )}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      {activity.isLoading ? (
+        <div className="flex items-center justify-center py-20">
+          <span className="size-[22px] animate-spin rounded-full border-2 border-accent border-t-transparent" />
+        </div>
+      ) : activity.isError ? (
+        <Blank
+          top="pt-20"
+          icon={<CloudOff className="size-[46px]" />}
+          title={t("That could not be read")}
+          line={errorMessage(activity.error)}
+          action={
+            <button type="button" className="btn btn-secondary mt-4" onClick={() => void activity.refetch()}>
+              {t("Try again")}
+            </button>
+          }
+        />
+      ) : (
+        <List
+          rows={rows}
+          onOpen={open}
+          empty={
+            tab === "felt" ? (
+              <Blank
+                icon={<Heart className="size-[46px]" />}
+                title={t("Nothing felt yet")}
+                line={t("Drops, Vibes and songs you heart show up here — so you can find your way back to them.")}
+              />
+            ) : (
+              <Blank
+                icon={<MessageCircle className="size-[46px]" />}
+                title={t("You have not responded anywhere")}
+                line={t("The Drops and Vibes you leave a line on gather here.")}
+              />
+            )
+          }
+        />
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, type ReactNode, type Ref } from "react";
 import { ImageOff } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useMediaUrl } from "@/lib/media";
@@ -72,9 +72,28 @@ interface AuthedVideoProps {
   loop?: boolean;
   playsInline?: boolean;
   onEnded?: () => void;
+  /**
+   * The element itself, for the two screens that drive a clip rather than hand
+   * it to the browser's own controls — the Vibes reel, which pauses on a tap,
+   * winds back when it is left, and draws its own progress. Everything else
+   * leaves it out and the clip is the browser's.
+   */
+  videoRef?: Ref<HTMLVideoElement>;
+  onTimeUpdate?: () => void;
 }
 
-export function AuthedVideo({ src, className, controls, autoPlay, muted, loop, playsInline = true, onEnded }: AuthedVideoProps) {
+export function AuthedVideo({
+  src,
+  className,
+  controls,
+  autoPlay,
+  muted,
+  loop,
+  playsInline = true,
+  onEnded,
+  videoRef,
+  onTimeUpdate,
+}: AuthedVideoProps) {
   const media = useMediaUrl(src);
   if (!src) return <div className={cn("bg-solid", className)} />;
   if (media.failed) {
@@ -89,6 +108,7 @@ export function AuthedVideo({ src, className, controls, autoPlay, muted, loop, p
   }
   return (
     <video
+      ref={videoRef}
       src={media.src}
       className={cn("object-cover", className)}
       controls={controls}
@@ -98,6 +118,7 @@ export function AuthedVideo({ src, className, controls, autoPlay, muted, loop, p
       playsInline={playsInline}
       preload="metadata"
       onEnded={onEnded}
+      onTimeUpdate={onTimeUpdate}
     />
   );
 }

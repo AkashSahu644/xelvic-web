@@ -2089,9 +2089,15 @@ export function CameraCapture({
       const results = await Promise.allSettled(
         threadIds.map((threadId) =>
           api.post(`/chat/threads/${threadId}/messages/send/`, {
-            kind: "spark",
+            // A Spark is not a message kind. It is an ordinary photo or clip
+            // whose payload carries `view_once`, which is the whole of what
+            // makes the server hand its bytes to one look and then purge them.
+            // The web used to send `kind: "spark"`, which the server does not
+            // know, so every Spark sent from here was refused.
+            kind: shot.kind,
             body: "",
             asset: asset.id,
+            payload: { view_once: true },
             client_id: crypto.randomUUID(),
           }),
         ),

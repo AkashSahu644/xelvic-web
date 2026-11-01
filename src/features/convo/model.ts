@@ -2,7 +2,7 @@ import type { ThreadCard, UserCard } from "@/types/api";
 
 export function threadTitle(thread: ThreadCard) {
   if (thread.title) return thread.title;
-  const person = thread.other ?? thread.member;
+  const person = thread.other ?? thread.member ?? thread.members?.[0]?.user;
   return person?.name || person?.username || "Conversation";
 }
 
@@ -41,14 +41,17 @@ export function threadLine(thread: ThreadCard, unread: number) {
     return unread > 0 ? (unread === 1 ? "1 new message" : `${unread} new messages`) : "Say something";
   }
   if (preview.held) return "Waiting for them";
-  if (thread.status === "Opened") return "Opened";
-  if (thread.status && preview.mine) return thread.status;
+  // The preview is the last message, whoever sent it. An outgoing receipt
+  // word only describes that message when it is *my* message; using it for
+  // an incoming message would hide what the other person actually said.
   if (preview.text?.trim()) {
     return `${preview.mine ? "You: " : ""}${preview.text.trim()}`;
   }
   if (preview.kind && PREVIEW_LABELS[preview.kind]) {
     return `${preview.mine ? "You: " : ""}${PREVIEW_LABELS[preview.kind]}`;
   }
+  if (preview.mine && thread.status) return thread.status;
+  if (preview.kind) return preview.mine ? "You sent something" : "Something arrived";
   if (thread.status) return thread.status;
   return unread > 0 ? (unread === 1 ? "1 new message" : `${unread} new messages`) : "Say something";
 }

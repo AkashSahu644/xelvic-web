@@ -2,6 +2,15 @@ import type { ThemeMark } from "@/theme/ThemeMarkArt";
 
 export type ShellPage = "drops" | "moments" | "convo" | "audio" | "live";
 
+/** The bar a reading wears. See `XChrome` on the Android side. */
+export type ChromeKind = "glass" | "dark" | "grey";
+
+/** What a pane in a glass list is made of. See `XPane`. */
+export type PaneKind = "ink" | "glass";
+
+/** Ruled rows, or panes floating over the page. See `XListStyle`. */
+export type ListStyle = "flush" | "glass";
+
 export interface ThemePalette {
   accent: string;
   accentPill: string;
@@ -13,7 +22,78 @@ export interface ThemePalette {
   onAccent: string;
   isDark: boolean;
   scrim: number;
+  /**
+   * The bar this reading asks for.
+   *
+   * A theme that names one keeps it — a designed theme brings its own, and a
+   * night that wants the charcoal says so. One that names none is the app's
+   * own: grey by day, charcoal at night. See `XTheme.chrome`. Left off the
+   * entries that declare nothing, so the day/night question stays open.
+   */
+  chrome?: ChromeKind;
+  /** The pane a glass list is made of, or nothing for the bar's material. */
+  pane?: PaneKind | null;
+  /** Whether the convo list is panes or ruled rows. */
+  list?: ListStyle;
+  /** The colours a mixed theme leads with. Nothing for a designed one. */
+  tones?: string[];
+  /**
+   * The colours a server row may lay over this reading — §2 of `theme.dart`.
+   *
+   * A token that is not here keeps the value the design already had, so a row
+   * may say `accent` and nothing else and every other colour still comes from
+   * the design. Only ever set by `paletteWithTokens`.
+   */
+  field?: string;
+  sheet?: string;
+  button?: string;
+  buttonText?: string;
+  buttonOff?: string;
+  good?: string;
+  bad?: string;
+  chatTint?: string;
+  bubbleOut?: string;
+  bubbleOutText?: string;
+  bubbleIn?: string;
+  bubbleInText?: string;
+  navGround?: string;
+  navFill?: number;
+  navQuiet?: string;
+  navEdge?: string;
+  navText?: string;
+  paneGround?: string;
+  paneFill?: number;
+  paneHot?: number;
+  paneEdge?: string;
+  paneText?: string;
 }
+
+/**
+ * One of the eight colours a theme can be mixed from, in the order the picker
+ * lays them out.
+ *
+ * All chosen to the same rule: dark enough as text on white, lifted on the
+ * pill. A bright yellow cannot be — #FFC107 as text on white is 1.7:1, which is
+ * not a faint colour but an unreadable one — so "Yellow" here is the deepest
+ * gold that still clears the bar, and it is the *pill* that carries the bright
+ * one. See `XTones`.
+ */
+export interface Tone {
+  name: string;
+  on: string;
+  pill: string;
+}
+
+export const TONES: Tone[] = [
+  { name: "Pink", on: "#E31B66", pill: "#E31B66" },
+  { name: "Red", on: "#C62828", pill: "#FF6B6B" },
+  { name: "Yellow", on: "#9A6E00", pill: "#FFC53D" },
+  { name: "Green", on: "#2E7D32", pill: "#69DB7C" },
+  { name: "Teal", on: "#0E7C8C", pill: "#3DD6E8" },
+  { name: "Blue", on: "#1565C0", pill: "#5AA9FF" },
+  { name: "Violet", on: "#6A1B9A", pill: "#C77DFF" },
+  { name: "Slate", on: "#37474F", pill: "#A9B6BF" },
+];
 
 export interface ThemeDesign {
   key: string;
@@ -22,10 +102,108 @@ export interface ThemeDesign {
   character: string;
   mark: ThemeMark;
   price: number;
+  /** The poster in its dark reading, which `coverFor` falls back to. */
   cover: string;
+  /** The same poster in the light reading, or nothing for a painting. */
+  coverLight?: string;
+  /**
+   * A face that comes *with* the theme, offered when the theme is put on.
+   *
+   * Not the same thing as [profileWall], and the two are deliberately kept
+   * apart: this is a picture the preview offers to make the account's avatar,
+   * and that is the wallpaper the profile screen draws behind it. Teddy's are
+   * the same file; Anime Blue's and Alone's are not.
+   */
+  profile?: string;
+  /** And a cover that comes with it, offered by the same switch. */
+  profileCover?: string;
+  /**
+   * The pictures the two pushed screens draw with, which are the app's
+   * `XTheme.profileWall`, `XTheme.coverArt` and `XTheme.chatWall`.
+   *
+   * The five tabs come from [art]; a profile and the inside of a chat are
+   * routes over the shell rather than tabs of it, so the app carries their
+   * pictures on the theme instead of in the backdrop — and a theme of colours
+   * has none of the three.
+   */
+  profileWall?: string;
+  /** The band drawn over [profileWall]. */
+  coverArt?: string;
+  /**
+   * The wallpaper behind an open chat.
+   *
+   * It ranks *below* a wallpaper somebody picked for a thread and below a photo
+   * they sent, both of which outrank a theme — see `apps.chat`'s own order.
+   */
+  chatWall?: string;
   art?: { page?: string } | Partial<Record<ShellPage, string>>;
   light: ThemePalette;
   dark: ThemePalette;
+  /**
+   * Whether this design is one the Studio authored — a row in the catalogue
+   * rather than a design written into the build.
+   *
+   * It matters in exactly one place: the ladder. A bundled design's rung is
+   * found by `tierOf`, and a design the ladder has never heard of falls back to
+   * the floor — which is *included*, which would make every theme staff
+   * authored free to wear. A custom design is priced by its row and gated on
+   * owning it, never on a rung. See `XDesign.custom`.
+   */
+  custom?: boolean;
+  /** The server's colour tokens, laid over the design. See `withTokens`. */
+  tokens?: ThemeTokens | null;
+}
+
+/**
+ * One reading's colour tokens, as the Style Studio panel writes them.
+ *
+ * Declared here rather than beside the reading functions in `shelf.ts` because
+ * a design *carries* them: a catalogue row lays these over the palette the
+ * design was built with, and the design has to be able to say what it may be
+ * given. `shelf.ts` reads them; this file holds the vocabulary.
+ */
+export interface ThemeTokenGroup {
+  accent?: string;
+  text?: string;
+  dim?: string;
+  ink?: string;
+  card?: string;
+  line?: string;
+  scrim?: number;
+  field?: string;
+  sheet?: string;
+  button?: string;
+  button_text?: string;
+  button_disabled?: string;
+  good?: string;
+  bad?: string;
+  chat_tint?: string;
+  bubble_out?: string;
+  bubble_out_text?: string;
+  bubble_in?: string;
+  bubble_in_text?: string;
+  nav_ground?: string;
+  nav_fill?: number;
+  nav_quiet?: string;
+  nav_edge?: string;
+  nav_text?: string;
+  pane_ground?: string;
+  pane_fill?: number;
+  pane_hot?: number;
+  pane_edge?: string;
+  pane_text?: string;
+}
+
+/** The vocabulary a catalogue row may speak: a light group, a dark one, and three words. */
+export interface ThemeTokens {
+  light?: ThemeTokenGroup;
+  dark?: ThemeTokenGroup;
+  /** `dark` | `grey` | `glass` — the bar's material. */
+  nav?: string;
+  /** `ink` | `glass` | `inherit` — the pane's. */
+  panes?: string;
+  /** `flush` | `glass` — the list's shape. */
+  list?: string;
 }
 
 export const designedThemes: ThemeDesign[] = [
@@ -37,6 +215,7 @@ export const designedThemes: ThemeDesign[] = [
     mark: "blob",
     price: 0,
     cover: "/themes/covers/pink.png",
+    coverLight: "/themes/covers/pink_light.png",
     light: {
       accent: "#E31B66",
       accentPill: "#E31B66",
@@ -70,6 +249,7 @@ export const designedThemes: ThemeDesign[] = [
     mark: "horn",
     price: 0,
     cover: "/themes/covers/unicorn.png",
+    coverLight: "/themes/covers/unicorn_light.png",
     art: { page: "/themes/unicorn/page.jpg" },
     light: {
       accent: "#9C0E4A",
@@ -144,6 +324,7 @@ export const designedThemes: ThemeDesign[] = [
     mark: "cup",
     price: 60,
     cover: "/themes/covers/monsoon.png",
+    coverLight: "/themes/covers/monsoon_light.png",
     light: {
       accent: "#1B4E7A",
       accentPill: "#3D9BE9",
@@ -177,6 +358,7 @@ export const designedThemes: ThemeDesign[] = [
     mark: "bolt",
     price: 60,
     cover: "/themes/covers/chai.png",
+    coverLight: "/themes/covers/chai_light.png",
     light: {
       accent: "#8C4A1E",
       accentPill: "#E08A3C",
@@ -210,6 +392,7 @@ export const designedThemes: ThemeDesign[] = [
     mark: "flower",
     price: 60,
     cover: "/themes/covers/neon.png",
+    coverLight: "/themes/covers/neon_light.png",
     light: {
       accent: "#7A6C00",
       accentPill: "#E8FF3D",
@@ -243,6 +426,7 @@ export const designedThemes: ThemeDesign[] = [
     mark: "shell",
     price: 200,
     cover: "/themes/covers/orchid.png",
+    coverLight: "/themes/covers/orchid_light.png",
     light: {
       accent: "#7B2D8E",
       accentPill: "#D982F0",
@@ -276,6 +460,7 @@ export const designedThemes: ThemeDesign[] = [
     mark: "flame",
     price: 200,
     cover: "/themes/covers/tidepool.png",
+    coverLight: "/themes/covers/tidepool_light.png",
     light: {
       accent: "#0F6E79",
       accentPill: "#3FD8E8",
@@ -309,6 +494,7 @@ export const designedThemes: ThemeDesign[] = [
     mark: "star",
     price: 200,
     cover: "/themes/covers/ember.png",
+    coverLight: "/themes/covers/ember_light.png",
     light: {
       accent: "#A3301B",
       accentPill: "#FF7043",
@@ -342,6 +528,7 @@ export const designedThemes: ThemeDesign[] = [
     mark: "blossom",
     price: 450,
     cover: "/themes/covers/cosmos.png",
+    coverLight: "/themes/covers/cosmos_light.png",
     light: {
       accent: "#1B3F8F",
       accentPill: "#6E9BFF",
@@ -375,6 +562,7 @@ export const designedThemes: ThemeDesign[] = [
     mark: "sun",
     price: 450,
     cover: "/themes/covers/sakura.png",
+    coverLight: "/themes/covers/sakura_light.png",
     light: {
       accent: "#B02B62",
       accentPill: "#FF8FB0",
@@ -408,6 +596,7 @@ export const designedThemes: ThemeDesign[] = [
     mark: "ribbon",
     price: 450,
     cover: "/themes/covers/marigold.png",
+    coverLight: "/themes/covers/marigold_light.png",
     light: {
       accent: "#96610A",
       accentPill: "#FFB01F",
@@ -441,6 +630,7 @@ export const designedThemes: ThemeDesign[] = [
     mark: "shard",
     price: 1500,
     cover: "/themes/covers/aurora.png",
+    coverLight: "/themes/covers/aurora_light.png",
     light: {
       accent: "#1F7A6E",
       accentPill: "#4FE3C1",
@@ -474,6 +664,7 @@ export const designedThemes: ThemeDesign[] = [
     mark: "feather",
     price: 1500,
     cover: "/themes/covers/obsidian.png",
+    coverLight: "/themes/covers/obsidian_light.png",
     light: {
       accent: "#3C4450",
       accentPill: "#A9B6BF",
@@ -507,6 +698,7 @@ export const designedThemes: ThemeDesign[] = [
     mark: "ring",
     price: 1500,
     cover: "/themes/covers/peacock.png",
+    coverLight: "/themes/covers/peacock_light.png",
     light: {
       accent: "#0E5C7A",
       accentPill: "#38C7E8",
@@ -540,6 +732,7 @@ export const designedThemes: ThemeDesign[] = [
     mark: "swirl",
     price: 4000,
     cover: "/themes/covers/solaris.png",
+    coverLight: "/themes/covers/solaris_light.png",
     light: {
       accent: "#8F5B00",
       accentPill: "#FFB627",
@@ -573,6 +766,7 @@ export const designedThemes: ThemeDesign[] = [
     mark: "eclipse",
     price: 4000,
     cover: "/themes/covers/nebula.png",
+    coverLight: "/themes/covers/nebula_light.png",
     light: {
       accent: "#A02E8B",
       accentPill: "#F06FD8",
@@ -606,6 +800,7 @@ export const designedThemes: ThemeDesign[] = [
     mark: "paw",
     price: 4000,
     cover: "/themes/covers/eclipse.png",
+    coverLight: "/themes/covers/eclipse_light.png",
     light: {
       accent: "#8A3D0F",
       accentPill: "#FF8A3D",
@@ -633,20 +828,3 @@ export const designedThemes: ThemeDesign[] = [
   },
 ];
 
-export const paintingThemes = [
-  { key: "alone", name: "Alone", src: "/themes/alone/drops.jpg" },
-  { key: "animeblue", name: "Anime Blue", src: "/themes/animeblue/drops.jpg" },
-  { key: "astro", name: "Astro", src: "/themes/astro/page.png" },
-  { key: "bubblegum", name: "Bubblegum", src: "/themes/bubblegum/page.png" },
-  { key: "cutlass", name: "Cutlass", src: "/themes/cutlass/page.png" },
-  { key: "dino", name: "Dino", src: "/themes/dino/page.png" },
-  { key: "idol", name: "Idol", src: "/themes/idol/page.png" },
-  { key: "kitsune", name: "Kitsune", src: "/themes/kitsune/page.png" },
-  { key: "mecha", name: "Mecha", src: "/themes/mecha/page.png" },
-  { key: "ronin", name: "Ronin", src: "/themes/ronin/page.png" },
-  { key: "shinobi", name: "Shinobi", src: "/themes/shinobi/page.png" },
-  { key: "shojo", name: "Shojo", src: "/themes/shojo/page.png" },
-  { key: "teddy", name: "Teddy", src: "/themes/teddy/drops.jpg" },
-  { key: "toon", name: "Toon", src: "/themes/toon/page.png" },
-  { key: "windup", name: "Windup", src: "/themes/windup/page.png" },
-] as const;
