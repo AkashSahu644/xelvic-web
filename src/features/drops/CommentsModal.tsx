@@ -15,23 +15,25 @@ import {
   Trash,
   UserRound,
 } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Button } from "@/components/Button";
-import { AuthedImage } from "@/components/Media";
-import { ConfirmDialog, Modal } from "@/components/Modal";
-import { EmptyState, ErrorState } from "@/components/States";
-import { VerifiedTick } from "@/components/Tick";
+import { Avatar } from "@/components/ui/Avatar";
+import { Button } from "@/components/ui/Button";
+import { AuthedImage } from "@/components/media/Media";
+import { ConfirmDialog, Modal } from "@/components/overlays/Modal";
+import { EmptyState, ErrorState } from "@/components/ui/States";
+import { VerifiedTick } from "@/components/icons/Tick";
 import { SheetRow } from "@/features/profile/parts";
 import { ReportSheet } from "@/features/report/ReportSheet";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { errorMessage } from "@/lib/errors";
-import { count, relativeTime } from "@/lib/format";
-import { uploadAsset } from "@/lib/upload";
-import { useAuth } from "@/providers/AuthProvider";
-import { useToast } from "@/providers/ToastProvider";
+import { cn } from "@/utils/cn";
+import { errorMessage } from "@/utils/errors";
+import { count, relativeTime } from "@/utils/format";
+import { uploadAsset } from "@/utils/upload";
+import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/useToast";
+import { dropsService } from "@/services/drops.service";
+import { socialService } from "@/services/social.service";
+import { stickersService } from "@/services/stickers.service";
 import type { Asset, Comment, Drop, Note, Sticker, UserCard } from "@/types/api";
-import { dropIsVibe } from "./model";
+import { dropBase, dropIsVibe } from "./model";
 import { RespondBody, RespondMedia, RespondSticker } from "./RespondParts";
 import { RespondVoice } from "./RespondVoice";
 
@@ -42,32 +44,6 @@ const MAX_MENTION = 5;
 const HOLD_MS = 480;
 /** How long a tap waits to find out it was not the first of two. */
 const DOUBLE_MS = 250;
-
-/**
- * Where a respond lives, which is two tables and two sets of routes.
- *
- * A Vibe's responds are its own rows on its own table, and the server files
- * them under `/drops/vibes/{id}/comments/` and `/drops/vibe-comments/` — the
- * same mistake of reading `/drops/{id}/...` for a clip would 404 rather than
- * say anything wrong, which is why the split is worked out once here. `row` is
- * the address of one respond by its own id, which is what a reword and a
- * take-down act on.
- */
-function commentRoutes(drop: Drop) {
-  return dropIsVibe(drop)
-    ? { list: `/drops/vibes/${drop.id}/comments/`, row: "/drops/vibe-comments" }
-    : { list: `/drops/${drop.id}/comments/`, row: "/drops/comments" };
-}
-
-/**
- * Where a note thread lives. Notes hang off the same post as its responds and
- * are split the same way; only the words at the end of the address differ.
- */
-function noteRoutes(drop: Drop) {
-  return dropIsVibe(drop)
-    ? { list: `/drops/vibes/${drop.id}/notes/`, row: "/drops/vibe-notes" }
-    : { list: `/drops/${drop.id}/notes/`, row: "/drops/notes" };
-}
 
 /**
  * One respond: who, when, what they said, the upload and sticker it carries,
@@ -81,14 +57,14 @@ function noteRoutes(drop: Drop) {
  */
 function CommentRow({
   comment,
-  likeBase,
+  base,
   isReply,
   onAgree,
   onReply,
   onMenu,
 }: {
   comment: Comment;
-  likeBase: string;
+  base: string;
   isReply: boolean;
   onAgree: () => void;
   onReply: () => void;
@@ -112,7 +88,7 @@ function CommentRow({
       // The count is the server's and the flag is the tap: a comment's likes are
       // not on the card, so the list is re-read from the answer rather than
       // moved by a guess.
-      await api.post(`${likeBase}/${comment.id}/like/`, { on: !comment.liked });
+      await dropsService.likeComment(base, comment.id, !comment.liked);
       onAgree();
     } catch {
       // The like is the server's to give; a failed one leaves the row as it was.
@@ -385,8 +361,7 @@ export function CommentsModal({
   const navigate = useNavigate();
   const { toast } = useToast();
   const { user } = useAuth();
-  const routes = commentRoutes(drop);
-  const noteWays = noteRoutes(drop);
+  const base = dropBase(drop);
 
   const [tab, setTab] = useState<"comments" | "notes">(openOnNotes ? "notes" : "comments");
   const [body, setBody] = useState(draft ?? "");
@@ -435,29 +410,26 @@ export function CommentsModal({
   const commentsQuery = useQuery({
     queryKey: ["drop-comments", drop.id],
     enabled: open,
-    queryFn: () => api.get<{ comments: Comment[] }>(routes.list),
+    queryFn: () => dropsService.comments(base, drop.id),
   });
 
   const notesQuery = useQuery({
     queryKey: ["drop-notes", drop.id],
     enabled: open && onNotes,
-    queryFn: () => api.get<{ notes: Note[] }>(noteWays.list),
+    queryFn: () => dropsService.notes(base, drop.id),
   });
 
   const mentionsLookup = useQuery({
     queryKey: ["mentionable", mentionQuery ?? ""],
     enabled: open && !onNotes && mentionQuery !== null,
-    queryFn: () =>
-      api.get<UserCard[]>("/social/mentionable/", {
-        query: { q: (mentionQuery ?? "").trim() },
-      }),
+    queryFn: () => socialService.mentionable((mentionQuery ?? "").trim()),
     staleTime: 60_000,
   });
 
   const stickerShelf = useQuery({
     queryKey: ["stickers"],
     enabled: open && stickerOpen,
-    queryFn: () => api.get<{ stickers: Sticker[] }>("/stickers/"),
+    queryFn: () => stickersService.list(),
     staleTime: 5 * 60_000,
   });
 
@@ -632,7 +604,7 @@ export function CommentsModal({
     setSending(true);
     try {
       if (onNotes) {
-        const answer = await api.post<{ note: Note }>(noteWays.list, {
+        const answer = await dropsService.note(base, drop.id, {
           body: text,
           ...(replySubject ? { subject: replySubject.id } : {}),
           ...(chosen ? { asset: chosen.id } : {}),
@@ -651,7 +623,7 @@ export function CommentsModal({
         const named = mentions
           .filter((person) => lower.includes(`@${person.username.toLowerCase()}`))
           .map((person) => person.id);
-        const answer = await api.post<{ comment: Comment; count?: number }>(routes.list, {
+        const answer = await dropsService.comment(base, drop.id, {
           body: text,
           ...(chosen ? { asset: chosen.id } : {}),
           ...(worn ? { sticker: worn.id } : {}),
@@ -688,7 +660,7 @@ export function CommentsModal({
       <CommentRow
         key={String(comment.id)}
         comment={comment}
-        likeBase={routes.row}
+        base={base}
         isReply={Boolean(comment.parent)}
         onAgree={() => void commentsQuery.refetch()}
         onReply={() => startReply(comment)}
@@ -712,7 +684,7 @@ export function CommentsModal({
       const named = (editing.mentions ?? [])
         .filter((person) => lower.includes(`@${person.username.toLowerCase()}`))
         .map((person) => person.id);
-      const answer = await api.patch<{ comment: Comment }>(`${routes.row}/${editing.id}/`, {
+      const answer = await dropsService.editComment(base, editing.id, {
         body: text,
         mentions: named,
       });
@@ -737,7 +709,7 @@ export function CommentsModal({
     if (!removing || removingBusy) return;
     setRemovingBusy(true);
     try {
-      await api.delete(`${routes.row}/${removing.id}/`);
+      await dropsService.removeComment(base, removing.id);
       queryClient.setQueryData<{ comments: Comment[] }>(["drop-comments", drop.id], (current) =>
         current
           ? { comments: current.comments.filter((row) => String(row.id) !== String(removing.id)) }
@@ -756,7 +728,7 @@ export function CommentsModal({
     if (takingBusy) return;
     setTakingBusy(true);
     try {
-      await api.delete(`${noteWays.row}/${note.id}/`);
+      await dropsService.removeNote(base, note.id);
       queryClient.setQueryData<{ notes: Note[] }>(["drop-notes", drop.id], (current) =>
         current ? { notes: current.notes.filter((row) => String(row.id) !== String(note.id)) } : current,
       );

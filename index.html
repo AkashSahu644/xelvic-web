@@ -4,6 +4,15 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- The API is the first request this page makes and the slowest one to
+         start, because DNS and TLS to a new host happen before a byte of JSON
+         moves. Opening those two ahead of the bundle means the first call is a
+         request rather than a request plus a handshake. `crossorigin` matters:
+         the API answers CORS, and a preconnect without it opens a connection
+         the CORS request cannot reuse. In dev the calls go to localhost and
+         these point at a host nothing uses — a dud socket, not a delay. -->
+    <link rel="preconnect" href="https://api.xelvic.com" crossorigin />
+    <link rel="dns-prefetch" href="https://api.xelvic.com" />
     <meta name="theme-color" content="#F7F7FB" />
     <meta name="color-scheme" content="light dark" />
     <meta

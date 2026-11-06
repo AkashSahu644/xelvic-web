@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { cn } from "@/lib/cn";
-import { useMediaUrl } from "@/lib/media";
+import { cn } from "@/utils/cn";
+import { useMediaUrl } from "@/hooks/useMediaUrl";
 import { MomentDropCard } from "./MomentDropCard";
 import { MomentPollCard } from "./MomentPollCard";
 import type { Asset, DropPreview, MomentItem, MomentPoll } from "@/types/api";

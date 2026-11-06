@@ -1,0 +1,578 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --accent: #e31b66;
+  --accent-rgb: 227 27 102;
+  --accent-pill: #e31b66;
+  --accent-pill-rgb: 227 27 102;
+  --page: #f7f7fb;
+  --page-rgb: 247 247 251;
+  --card: #ffffff;
+  --card-rgb: 255 255 255;
+  --line: #e3e3ec;
+  --line-rgb: 227 227 236;
+  --ink: #13131a;
+  --ink-rgb: 19 19 26;
+  --dim: #6b6b7b;
+  --dim-rgb: 107 107 123;
+  --on-accent: #ffffff;
+  --on-accent-rgb: 255 255 255;
+  --accent-ink: #ffffff;
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-chip: color-mix(in srgb, var(--accent) 12%, var(--card));
+  --accent-strong: color-mix(in srgb, var(--accent) 18%, var(--card));
+  --surface-2: color-mix(in srgb, var(--ink) 6%, var(--card));
+  --surface-3: color-mix(in srgb, var(--ink) 3.5%, var(--card));
+  --pane: var(--card);
+  --pane-edge: var(--line);
+  --solid: #13131a;
+  --solid-rgb: 19 19 26;
+  --good: #0b7a44;
+  --good-rgb: 11 122 68;
+  --bad: #d92b2b;
+  --bad-rgb: 217 43 43;
+  --nav: 19 19 26;
+  --nav-fill: 0.62;
+  --nav-ink: #ffffff;
+  --nav-quiet: #dcdce4;
+  --nav-edge: #e3e3ec;
+  --radius-control: 14px;
+  /*
+   * The eight tones a person's name is written in — `XTones.all` in
+   * `app/lib/theme.dart`, value for value. Which tone is whose is decided in
+   * `features/convo/skin.ts` (`nameTint`), by the same FNV-1a hash the app
+   * runs on the same seed. The light readings are the app's `.on` colours and
+   * the dark block below is its `.pill` pair, so a name in a group is the
+   * colour the phone drew it in, on either scheme.
+   */
+  --tone-pink: #e31b66;
+  --tone-red: #c62828;
+  --tone-yellow: #9a6e00;
+  --tone-green: #2e7d32;
+  --tone-teal: #0e7c8c;
+  --tone-blue: #1565c0;
+  --tone-violet: #6a1b9a;
+  --tone-slate: #37474f;
+  color-scheme: light;
+}
+
+@layer base {
+  * {
+    border-color: var(--line);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    /* The dynamic unit, which is what every page root in this app already uses
+       (`min-h-dvh`, `max-h-[92dvh]`, `h-[calc(100dvh-57px)]`). `100vh` is the
+       *large* viewport on a phone, so it is always taller than the area a
+       reader can see and left every page a scroll longer than its own content. */
+    min-height: 100dvh;
+    /* A guard, not a diagnosis: nothing here is known to be too wide, but a
+       single child that is would slide the whole document sideways, and a feed
+       is a column. `clip` rather than `hidden` because `hidden` makes the box a
+       scroll container, and the sticky header and the sticky rail resolve
+       against it. It does nothing for height — see `frameBox` in `DropCard`. */
+    overflow-x: clip;
+    background: var(--page);
+    color: var(--ink);
+    font-family: "Manrope Variable", ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-synthesis: weight;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+
+  button {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--accent) 24%, transparent);
+    color: var(--ink);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  p {
+    margin: 0;
+  }
+
+  img,
+  video {
+    display: block;
+    max-width: 100%;
+  }
+}
+
+@layer utilities {
+  .bg-page {
+    background-color: var(--page);
+  }
+  .bg-card {
+    background-color: var(--card);
+  }
+  .bg-accent {
+    background-color: var(--accent);
+  }
+  .bg-accent-pill {
+    background-color: var(--accent-pill);
+  }
+  .bg-paper {
+    background-color: color-mix(in srgb, var(--accent) 8%, var(--card));
+  }
+  .bg-solid {
+    background-color: var(--solid);
+  }
+  .text-ink {
+    color: var(--ink);
+  }
+  .text-dim {
+    color: var(--dim);
+  }
+  .text-accent {
+    color: var(--accent);
+  }
+  .text-on-accent {
+    color: var(--on-accent);
+  }
+  .border-line {
+    border-color: var(--line);
+  }
+  .border-accent {
+    border-color: var(--accent);
+  }
+  .ring-accent {
+    --tw-ring-color: var(--accent);
+  }
+  .accent-soft {
+    background-color: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+  .accent-wash {
+    background: color-mix(in srgb, var(--accent) 6%, var(--card));
+  }
+  .bg-accent-chip {
+    background-color: var(--accent-chip);
+  }
+  .bg-surface-2 {
+    background-color: var(--surface-2);
+  }
+  .bg-surface-3 {
+    background-color: var(--surface-3);
+  }
+  .surface {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-control);
+  }
+  .hairline {
+    border-color: var(--line);
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+  .text-pretty {
+    text-wrap: pretty;
+  }
+  /* A card in a long feed that is far below the fold is not laid out or
+     painted until the scroll comes near it. `auto` in the intrinsic size is
+     what keeps the page honest: once a card has been measured, its real
+     height is remembered, so the scrollbar and the scroll position do not
+     jump as cards below are realised. The two lengths are the ones a Drop
+     card spends most of its life between — short text, one picture. */
+  .feed-item {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 420px;
+  }
+}
+
+@layer components {
+  .btn {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: var(--radius-control);
+    padding: 0 1.1rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    transition:
+      transform 160ms cubic-bezier(0.22, 1, 0.36, 1),
+      background-color 160ms ease,
+      color 160ms ease,
+      border-color 160ms ease,
+      opacity 160ms ease;
+    user-select: none;
+  }
+  .btn:active {
+    transform: scale(0.98);
+  }
+  .btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: var(--on-accent);
+    border: 1px solid transparent;
+  }
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.05);
+  }
+  .btn-secondary {
+    background: var(--card);
+    color: var(--ink);
+    border: 1px solid var(--line);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 5%, var(--card));
+    border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+  }
+  .btn-ghost {
+    background: transparent;
+    color: var(--ink);
+    border: 1px solid transparent;
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--ink) 5%, transparent);
+  }
+  .btn-danger {
+    background: color-mix(in srgb, var(--bad) 10%, var(--card));
+    color: var(--bad);
+    border: 1px solid color-mix(in srgb, var(--bad) 24%, var(--line));
+  }
+  .icon-btn {
+    display: inline-flex;
+    width: 40px;
+    height: 40px;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    border-radius: 13px;
+    border: 1px solid transparent;
+    color: var(--dim);
+    transition:
+      background-color 160ms ease,
+      color 160ms ease,
+      transform 160ms ease;
+  }
+  .icon-btn:hover {
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
+    color: var(--ink);
+  }
+  .icon-btn:active {
+    transform: scale(0.94);
+  }
+  .field {
+    width: 100%;
+    min-height: 48px;
+    border-radius: var(--radius-control);
+    border: 1px solid var(--line);
+    background: var(--card);
+    padding: 0.75rem 1rem;
+    color: var(--ink);
+    transition:
+      border-color 160ms ease,
+      box-shadow 160ms ease;
+  }
+  .field::placeholder {
+    color: color-mix(in srgb, var(--dim) 80%, transparent);
+  }
+  .field:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+  .field-label {
+    display: block;
+    margin-bottom: 0.45rem;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    color: var(--dim);
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-control);
+  }
+  .chip {
+    display: inline-flex;
+    min-height: 34px;
+    align-items: center;
+    gap: 0.4rem;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    padding: 0 0.8rem;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--dim);
+    white-space: nowrap;
+  }
+  .chip[data-active="true"] {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent);
+  }
+  .glass-nav {
+    background: rgb(var(--nav) / var(--nav-fill));
+    border: 1px solid color-mix(in srgb, var(--nav-edge) 38%, transparent);
+    box-shadow:
+      0 1px 2px rgb(var(--nav) / 0.08),
+      0 18px 48px rgb(var(--nav) / 0.22);
+    backdrop-filter: blur(22px) saturate(140%);
+    -webkit-backdrop-filter: blur(22px) saturate(140%);
+  }
+  /* The ring round a face with a day behind it — the app's `Ring`, which is one
+     flat accent hairline and nothing else. It was a conic gradient here, and
+     the gradient is gone: the app has one rule about colour and it is that a
+     mark is one flat tone, so a ring that travelled through four colours said
+     something the phone never says. The quiet version of the same ring (a day
+     already watched) is the text colour at 16%, which is the app's
+     `X.fade(X.text, 0.16)` read in the web's tokens. */
+  .story-ring {
+    background: var(--accent);
+  }
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--line) 58%, transparent);
+  }
+  .skeleton::after {
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--card) 50%, transparent),
+      transparent
+    );
+    animation: shimmer 1.6s infinite;
+    content: "";
+  }
+  .prose-copy {
+    line-height: 1.65;
+    color: var(--dim);
+  }
+  .prose-copy strong {
+    color: var(--ink);
+  }
+  .scroll-area {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--dim) 30%, transparent) transparent;
+  }
+  .scroll-area::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scroll-area::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--dim) 26%, transparent);
+    border-radius: 999px;
+  }
+}
+
+/* index.css */
+@layer utilities {
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--dim) 24%, transparent) transparent;
+  }
+
+  .scroll-thin::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+
+  .scroll-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scroll-thin::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--dim) 24%, transparent);
+    border-radius: 999px;
+  }
+}
+
+@keyframes moment-progress {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+/*
+ * The heart a double tap on a Vibe leaves behind: it grows past its size and
+ * settles, then fades — one white glyph with the same shadow the words over a
+ * clip carry and no colour of its own. See `_heart` in `screens/vibes.dart`,
+ * whose scale-and-fade this is the web's copy of.
+ */
+@keyframes vibeBoom {
+  0% { opacity: 0; transform: scale(0.4); }
+  18% { opacity: 1; transform: scale(1.18); }
+  34% { transform: scale(0.96); }
+  46% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1); }
+}
+
+/*
+ * The in-app notice arriving: down from above and fading in, 220ms, the same
+ * journey `notice_banner.dart` makes with `AnimatedSlide(Offset(0, -1.3))` and
+ * an opacity fade on the same curve. It starts above the top edge rather than
+ * at it so the strip is seen arriving instead of appearing already there.
+ */
+@keyframes xelvic-notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(-130%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.xelvic-notice-in {
+  animation: xelvic-notice-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/*
+ * The next page of a side panel arriving: the Moments composer opening from the
+ * Spark panel, rather than replacing it in a single frame. It comes a short way
+ * from the right and fades in on the same curve the panel's own slide uses, so
+ * the two movements read as one.
+ */
+@keyframes xelvic-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(22px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.xelvic-panel-in {
+  animation: xelvic-panel-in 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes trim-wave-bounce {
+  from { transform: scaleY(0.55); }
+  to { transform: scaleY(1); }
+}
+
+/*
+ * The asking disc on a profile: one breath every two seconds, and one journey of
+ * the colour out and back every six.
+ *
+ * Ported from `_FloatingButton` in `app/lib/screens/person.dart`. The scale never
+ * touches layout — a transform is painted, not laid out — so the discs beside it
+ * keep their places. The colour must not hurry: spread over a single breath a
+ * journey through three stops would change several times a second, which is
+ * blinking rather than being alive, so it is held at six seconds and the breath
+ * repeats three times inside it. The stops are read off `--ask-a/b/c`, which the
+ * button sets from the theme's own palette in its current reading.
+ */
+@keyframes xelvic-ask-breath {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.09); }
+}
+
+@keyframes xelvic-ask-hue {
+  0%, 100% { background-color: var(--ask-a); }
+  25% { background-color: var(--ask-b); }
+  50% { background-color: var(--ask-c); }
+  75% { background-color: var(--ask-b); }
+}
+
+/* The hairline wears the same hue the disc is wearing, so the whole control is
+   one colour rather than a tint inside a ring belonging to something else. */
+@keyframes xelvic-ask-ring {
+  0%, 100% { border-color: color-mix(in srgb, var(--ask-a) 40%, transparent); }
+  25% { border-color: color-mix(in srgb, var(--ask-b) 40%, transparent); }
+  50% { border-color: color-mix(in srgb, var(--ask-c) 40%, transparent); }
+  75% { border-color: color-mix(in srgb, var(--ask-b) 40%, transparent); }
+}
+
+/* The ring brightens with the lift, off the same two-second curve, so the breath
+   is one movement and not a scale with a glow that arrives on its own. A wash
+   rather than a fill: the glyph on the disc is the page's ink and has to stay
+   legible at the lightest and the darkest stop alike. */
+@keyframes xelvic-ask-wash {
+  0%, 100% { opacity: 0.22; }
+  50% { opacity: 0.34; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+[data-dark='true'] {
+  /* The same eight tones, lifted so they read on a dark page — the app's own
+     `pill` readings. Pink is one colour in both, which is the app's too. */
+  --tone-red: #ff6b6b;
+  --tone-yellow: #ffc53d;
+  --tone-green: #69db7c;
+  --tone-teal: #3dd6e8;
+  --tone-blue: #5aa9ff;
+  --tone-violet: #c77dff;
+  --tone-slate: #a9b6bf;
+}
+
+[data-dark='true'] .wordmark-auto { filter: invert(1) brightness(1.6); }
+

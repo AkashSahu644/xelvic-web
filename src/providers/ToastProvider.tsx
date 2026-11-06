@@ -1,6 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AlertCircle, Check, Info, X } from "lucide-react";
-import { cn } from "@/lib/cn";
+import { ToastContext } from "@/context/toast";
+import { cn } from "@/utils/cn";
 
 type ToastTone = "info" | "success" | "error";
 
@@ -17,12 +18,10 @@ interface ToastInput {
   tone?: ToastTone;
 }
 
-interface ToastContextValue {
+export interface ToastContextValue {
   toast: (input: ToastInput) => void;
   dismiss: (id: number) => void;
 }
-
-const ToastContext = createContext<ToastContextValue | null>(null);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<Toast[]>([]);
@@ -97,8 +96,3 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useToast() {
-  const context = useContext(ToastContext);
-  if (!context) throw new Error("useToast must be used inside ToastProvider");
-  return context;
-}

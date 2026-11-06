@@ -5,7 +5,7 @@
 // on a tile are one number and cannot disagree.
 
 import { Zap } from "lucide-react";
-import { cn } from "@/lib/cn";
+import { cn } from "@/utils/cn";
 import { count, priceOf } from "@/theme/shop";
 import type { ThemeDesign } from "@/theme/catalog";
 import type { CatalogueTheme } from "./types";

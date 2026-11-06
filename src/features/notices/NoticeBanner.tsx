@@ -1,8 +1,8 @@
 import { useRef } from "react";
 import { BadgeCheck, PlayCircle, X } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { AuthedImage } from "@/components/Media";
-import { cn } from "@/lib/cn";
+import { Avatar } from "@/components/ui/Avatar";
+import { AuthedImage } from "@/components/media/Media";
+import { cn } from "@/utils/cn";
 import { noticeGlyph, noticeRowLine, noticeWho, type Notice } from "./model";
 
 /** How far sideways a pointer has to move before a hold becomes a swipe. */

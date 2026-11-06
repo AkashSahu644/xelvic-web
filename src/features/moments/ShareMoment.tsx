@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { LoaderCircle, Lock, Users, EyeOff } from "lucide-react";
-import { Button } from "@/components/Button";
-import { Modal } from "@/components/Modal";
-import { api } from "@/lib/api";
-import { errorMessage } from "@/lib/errors";
-import { uploadAsset } from "@/lib/upload";
-import { useToast } from "@/providers/ToastProvider";
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/overlays/Modal";
+import { errorMessage } from "@/utils/errors";
+import { uploadAsset } from "@/utils/upload";
+import { useToast } from "@/hooks/useToast";
+import { momentsService } from "@/services/moments.service";
 import {
   audienceIds,
   audienceLabel,
@@ -82,7 +82,7 @@ export function ShareMoment({
         });
       }
       setStage("Putting it up...");
-      await api.post("/moments/", {
+      await momentsService.post({
         items,
         audience: audience.mode,
         ...(audience.mode === "everyone" ? {} : { audience_users: audienceIds(audience) }),

@@ -1,8 +1,8 @@
-import { useState, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { EyeOff } from "lucide-react";
-import { AuthedImage } from "@/components/Media";
-import { ConfirmDialog } from "@/components/Modal";
-import { cn } from "@/lib/cn";
+import { AuthedImage } from "@/components/media/Media";
+import { ConfirmDialog } from "@/components/overlays/Modal";
+import { cn } from "@/utils/cn";
 import type { Asset } from "@/types/api";
 
 /**
@@ -34,6 +34,7 @@ export function SensitiveVeil({
   note,
   hideable,
   aspect,
+  frame,
   children,
 }: {
   sensitive?: boolean;
@@ -52,8 +53,18 @@ export function SensitiveVeil({
    * cover — the picture's box is the box the caller set, before and after.
    */
   hideable?: boolean;
-  /** The box the picture is drawn in, so the veil covers exactly that much. */
+  /** The shape alone, as height over width, for a caller that reserved its own box. */
   aspect?: number;
+  /**
+   * The exact box, for a caller that has already worked one out.
+   *
+   * A card in the feed caps a clip's height and a still's shape — see `frameBox`
+   * — so the cover has to be built from the same function rather than from the
+   * shape its caller happened to pass, or lifting the cover changes the height
+   * of the card. `aspect` stays for callers whose box is a plain shape (a rail
+   * tile, a convo's picture).
+   */
+  frame?: CSSProperties;
   children: ReactNode;
 }) {
   const [opened, setOpened] = useState(false);
@@ -86,8 +97,18 @@ export function SensitiveVeil({
 
   return (
     <div
-      className="relative flex items-center justify-center overflow-hidden"
-      style={aspect ? { aspectRatio: `1 / ${aspect}` } : undefined}
+      // The cover's box is the shape the caller reserved, so the card does not
+      // change height the moment somebody lifts it — but a shape is not a size:
+      // a portrait post's box is nearly twice as tall as the screen it is read
+      // on, and the cover has to answer the same ceiling the picture inside it
+      // answers. `frame` is that answer, worked out by the caller; without it
+      // the shape is drawn at the ceiling's own share of the screen. See
+      // `frameBox` in `frame.ts`.
+      className={cn(
+        "relative flex items-center justify-center overflow-hidden",
+        frame ? "w-full" : "max-h-[78dvh]",
+      )}
+      style={frame ?? (aspect ? { width: "100%", aspectRatio: `1 / ${aspect}` } : undefined)}
     >
       {preview ? (
         <AuthedImage

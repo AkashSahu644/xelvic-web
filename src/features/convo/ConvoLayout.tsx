@@ -1,8 +1,21 @@
 import { useEffect, useState } from "react";
 import { Link, Outlet, useParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { MessageCircleMore, Search } from "lucide-react";
-import { cn } from "@/lib/cn";
+import { cn } from "@/utils/cn";
 import { ConvoPage, NewConvoPanel } from "@/pages/ConvoPage";
+import { SparkSheet } from "@/features/sparks/SparkSheet";
+import { threadFace, threadTitle } from "@/features/convo/model";
+import type { Spark, ThreadCard } from "@/types/api";
+
+type SidePanel =
+  | { kind: "compose" }
+  | {
+      kind: "spark";
+      thread: ThreadCard;
+      spark: Spark | null;
+      balance?: number;
+    };
 
 function EmptyChatPane() {
   return (
@@ -53,25 +66,57 @@ function EmptyChatPane() {
 
 export function ConvoLayout() {
   const { threadId } = useParams();
-  const [composeOpen, setComposeOpen] = useState(false);
-  const [composeMounted, setComposeMounted] = useState(false);
-  const [composeVisible, setComposeVisible] = useState(false);
+  const queryClient = useQueryClient();
+  const [panel, setPanel] = useState<SidePanel | null>(null);
+  const [shownPanel, setShownPanel] = useState<SidePanel | null>(null);
+  const [panelVisible, setPanelVisible] = useState(false);
   const chatOpen = Boolean(threadId);
+  const composeOpen = panel?.kind === "compose";
 
   useEffect(() => {
-    if (threadId) setComposeOpen(false);
+    if (threadId) setPanel(null);
   }, [threadId]);
 
   useEffect(() => {
-    if (composeOpen) {
-      setComposeMounted(true);
-      setComposeVisible(true);
+    if (panel) {
+      setShownPanel(panel);
+      setPanelVisible(true);
       return;
     }
-    setComposeVisible(false);
-    const timer = window.setTimeout(() => setComposeMounted(false), 320);
+    setPanelVisible(false);
+    const timer = window.setTimeout(() => setShownPanel(null), 320);
     return () => window.clearTimeout(timer);
-  }, [composeOpen]);
+  }, [panel]);
+
+  function toggleCompose() {
+    setPanel((current) =>
+      current?.kind === "compose" ? null : { kind: "compose" },
+    );
+  }
+
+  function openSpark(
+    thread: ThreadCard,
+    spark: Spark | null,
+    balance?: number,
+  ) {
+    setPanel({ kind: "spark", thread, spark, balance });
+  }
+
+  /**
+   * The sheet changed something the rest of the page is showing.
+   *
+   * The row behind it, so a hide or a restore lands at once — and the two
+   * moment lists, because the other thing this sheet can do is put a card of the
+   * run on a day, and a moment that only appeared after a reload would be a
+   * moment the person is not sure went up. See `MomentsPage.refreshMoments`,
+   * which invalidates exactly these two for the same reason.
+   */
+  function refreshAfterSpark() {
+    void queryClient.invalidateQueries({ queryKey: ["sparks"] });
+    void queryClient.invalidateQueries({ queryKey: ["threads"] });
+    void queryClient.invalidateQueries({ queryKey: ["moments-tray"] });
+    void queryClient.invalidateQueries({ queryKey: ["moments-mine"] });
+  }
 
   return (
     <div className="relative flex h-[calc(100dvh-57px)] w-full overflow-hidden md:h-dvh">
@@ -86,23 +131,40 @@ export function ConvoLayout() {
           embedded
           activeThreadId={threadId}
           composeOpen={composeOpen}
-          onToggleCompose={() => setComposeOpen((open) => !open)}
+          onToggleCompose={toggleCompose}
+          onOpenSpark={openSpark}
         />
       </aside>
       <aside
         className={cn(
           "absolute inset-0 z-20 flex w-full flex-col overflow-hidden border-line bg-card transition-all duration-300 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:z-auto lg:shrink-0 lg:border-r",
-          composeVisible
+          panelVisible
             ? "translate-x-0 opacity-100 lg:w-[350px]"
             : "-translate-x-full opacity-0 lg:w-0 lg:translate-x-0",
-          !composeVisible && "pointer-events-none",
+          !panelVisible && "pointer-events-none",
         )}
-        aria-hidden={!composeVisible}
-        aria-label="New convo"
+        aria-hidden={!panelVisible}
+        aria-label={shownPanel?.kind === "spark" ? "Spark" : "New convo"}
       >
-        {composeMounted ? (
+        {shownPanel ? (
           <div className="h-full w-full shrink-0 lg:w-[350px]">
-            <NewConvoPanel onClose={() => setComposeOpen(false)} />
+            {shownPanel.kind === "spark" ? (
+              <SparkSheet
+                open
+                variant="panel"
+                threadId={String(shownPanel.thread.id)}
+                title={threadTitle(shownPanel.thread)}
+                spark={shownPanel.spark}
+                balance={shownPanel.balance}
+                // The card a run can be made into is about two people, and this
+                // is the one of them the row behind the sheet knows.
+                face={threadFace(shownPanel.thread)}
+                onClose={() => setPanel(null)}
+                onChanged={refreshAfterSpark}
+              />
+            ) : (
+              <NewConvoPanel onClose={() => setPanel(null)} />
+            )}
           </div>
         ) : null}
       </aside>

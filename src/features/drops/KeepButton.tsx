@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { errorMessage } from "@/lib/errors";
-import { useToast } from "@/providers/ToastProvider";
+import { cn } from "@/utils/cn";
+import { errorMessage } from "@/utils/errors";
+import { useToast } from "@/hooks/useToast";
+import { socialService } from "@/services/social.service";
 import type { UserCard } from "@/types/api";
 
 /** What `/social/users/{id}/follow/` answers: the gate, and what it offers now. */
@@ -52,9 +52,9 @@ export function KeepButton({
   useEffect(() => {
     if (known) return;
     let live = true;
-    void api
-      .get<{ gate?: { cta?: string | null; action?: string | null } | null }>(
-        `/social/users/${author.username}/`,
+    void socialService
+      .user<{ gate?: { cta?: string | null; action?: string | null } | null }>(
+        author.username,
       )
       .then((profile) => {
         if (live) setState({ cta: profile.gate?.cta ?? null, action: profile.gate?.action ?? null });
@@ -80,10 +80,10 @@ export function KeepButton({
     try {
       const answer =
         action === "withdraw"
-          ? await api.post<PeopleState>(`/social/users/${author.id}/withdraw/`, {})
+          ? await socialService.withdraw<PeopleState>(author.id)
           : action === "unblock"
-            ? await api.delete<PeopleState>(`/social/users/${author.id}/block/`)
-            : await api.post<PeopleState>(`/social/users/${author.id}/follow/`, {});
+            ? await socialService.unblock<PeopleState>(author.id)
+            : await socialService.follow<PeopleState>(author.id);
       if (action === "follow" && answer.relation?.following === true) {
         // Every card by this person stops offering the same invitation: the
         // page said "not kept", and that answer is out of date everywhere this

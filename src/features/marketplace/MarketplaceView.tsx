@@ -20,11 +20,11 @@
 // is one read of `/sparks/wallet/`, so the header and the tiles cannot disagree.
 
 import { useState } from "react";
-import { cn } from "@/lib/cn";
+import { cn } from "@/utils/cn";
 import { DripView } from "./DripView";
 import { LogoShopView } from "./LogoShopView";
 import { SparkPurse } from "./parts";
-import { useMarketWallet } from "./queries";
+import { useMarketWallet } from "@/hooks/useMarketplace";
 import { ThemeShopView } from "./ThemeShopView";
 
 /** Which of the three aisles the page opens on. See `ShopTab`. */

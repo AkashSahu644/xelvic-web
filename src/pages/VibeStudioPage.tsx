@@ -1,21 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { CloudOff, ChartColumn } from "lucide-react";
-import { Blank } from "@/components/Blank";
-import { AuthedImage } from "@/components/Media";
-import { PageHeader } from "@/components/Page";
-import { api } from "@/lib/api";
-import { ApiError, errorMessage } from "@/lib/errors";
-import { count } from "@/lib/format";
+import { Blank } from "@/components/ui/Blank";
+import { AuthedImage } from "@/components/media/Media";
+import { PageHeader } from "@/components/layout/Page";
+import { dropsService } from "@/services/drops.service";
+import { ApiError, errorMessage } from "@/utils/errors";
+import { count } from "@/utils/format";
 import {
   VibeStudioAudienceChart,
   VibeStudioRead,
   vibeCountText,
   vibeLengthText,
-  type VibeStudioAudience,
-  type VibeStudioDetail,
   type VibeStudioItem,
-  type VibeStudioList,
   type VibeStudioNumbers,
 } from "@/features/drops/VibeStudio";
 
@@ -50,7 +47,7 @@ function StudioFrame({ title, children }: { title: string; children: React.React
 function StudioList() {
   const studio = useQuery({
     queryKey: ["vibe-studio"],
-    queryFn: () => api.get<VibeStudioList>("/drops/vibes/studio/"),
+    queryFn: () => dropsService.studio(),
   });
 
   if (studio.isLoading) {
@@ -102,7 +99,7 @@ function StudioList() {
       </p>
       <Totals totals={data.totals} days={data.days} />
       <h2 className="mb-2 mt-5 text-[15px] font-extrabold tracking-[-0.2px]">Your clips</h2>
-      <div>
+      <div className="divide-y divide-line">
         {data.vibes.map((item) => (
           <ItemTile key={item.id} item={item} />
         ))}
@@ -129,7 +126,7 @@ function Totals({ totals, days }: { totals: VibeStudioNumbers; days: number }) {
       ) : (
         <>
           <div
-            className="rounded-[16px] p-3.5"
+            className="rounded-[18px] border border-line p-3.5"
             style={{ backgroundColor: "color-mix(in srgb, var(--ink) 5%, transparent)" }}
           >
             <p className="text-[10.5px] font-bold tracking-[0.3px] text-dim">Who watched</p>
@@ -200,12 +197,12 @@ function ItemTile({ item }: { item: VibeStudioItem }) {
   return (
     <Link
       to={`/app/drops/vibes/studio/${item.id}`}
-      className="flex items-start gap-3 rounded-[14px] py-1.5 transition hover:bg-[color-mix(in_srgb,var(--ink)_4%,transparent)]"
+      className="flex items-center gap-3 rounded-[14px] px-2 py-2.5 transition hover:bg-[color-mix(in_srgb,var(--ink)_4%,transparent)]"
     >
       <AuthedImage
         src={item.thumbnail}
         alt={caption || "Clip"}
-        className="h-[58px] w-11 shrink-0 rounded-[12px] bg-surface-2"
+        className="h-[64px] w-12 shrink-0 rounded-[10px] bg-surface-2 object-cover"
       />
       <div className="min-w-0 flex-1">
         <p className="truncate text-[13.5px] font-bold">{caption || "Untitled"}</p>
@@ -231,14 +228,14 @@ function ItemTile({ item }: { item: VibeStudioItem }) {
 function StudioItem({ id }: { id: string }) {
   const studio = useQuery({
     queryKey: ["vibe-studio-item", id],
-    queryFn: () => api.get<VibeStudioDetail>(`/drops/vibes/studio/${id}/`),
+    queryFn: () => dropsService.studioItem(id),
   });
 
   // The window is a second question, and a failure of it must not take the page
   // away: the numbers above stand on their own without it.
   const audience = useQuery({
     queryKey: ["vibe-studio-audience", id],
-    queryFn: () => api.get<VibeStudioAudience>(`/drops/vibes/studio/${id}/audience/`),
+    queryFn: () => dropsService.studioAudience(id),
     retry: false,
   });
 

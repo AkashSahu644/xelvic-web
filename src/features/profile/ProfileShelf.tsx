@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { AudioLines, ListMusic, Play } from "lucide-react";
-import { AuthedImage } from "@/components/Media";
-import { api, apiPathFrom } from "@/lib/api";
-import { errorMessage } from "@/lib/errors";
-import { cn } from "@/lib/cn";
-import { usePreferences } from "@/providers/PreferencesProvider";
+import { AuthedImage } from "@/components/media/Media";
+import { apiPathFrom } from "@/config/urls";
+import { dropsService } from "@/services/drops.service";
+import { errorMessage } from "@/utils/errors";
+import { cn } from "@/utils/cn";
+import { usePreferences } from "@/hooks/usePreferences";
 import type { Drop, Page } from "@/types/api";
 
 /**
@@ -166,7 +167,7 @@ export function ProfileShelf({ username, mine }: { username: string; mine: boole
 
   const shelf = useInfiniteQuery<ShelfPage>({
     queryKey: ["profile-shelf", username],
-    queryFn: ({ pageParam }) => api.get<ShelfPage>(String(pageParam)),
+    queryFn: ({ pageParam }) => dropsService.userShelf(username, String(pageParam)),
     initialPageParam: `/drops/users/${encodeURIComponent(username)}/`,
     getNextPageParam: (last) => apiPathFrom(last.next),
     enabled: Boolean(username),
@@ -174,7 +175,7 @@ export function ProfileShelf({ username, mine }: { username: string; mine: boole
 
   const vibes = useInfiniteQuery<ShelfPage>({
     queryKey: ["profile-vibes", username],
-    queryFn: ({ pageParam }) => api.get<ShelfPage>(String(pageParam)),
+    queryFn: ({ pageParam }) => dropsService.userVibes(username, String(pageParam)),
     initialPageParam: `/drops/users/${encodeURIComponent(username)}/vibes/`,
     getNextPageParam: (last) => apiPathFrom(last.next),
     enabled: Boolean(username),
@@ -212,7 +213,11 @@ export function ProfileShelf({ username, mine }: { username: string; mine: boole
         if (!entries.some((entry) => entry.isIntersecting)) return;
         if (active.hasNextPage && !active.isFetchingNextPage) void active.fetchNextPage();
       },
-      { rootMargin: "600px" },
+      // The phone's 600 points assumed the answer was already on its way. Here
+      // the first byte takes hundreds of milliseconds, so the sentinel asks
+      // further out — the next page arrives while there is still something to
+      // read, not after the reader has reached a spinner.
+      { rootMargin: "1800px 0px" },
     );
     observer.observe(node);
     return () => observer.disconnect();

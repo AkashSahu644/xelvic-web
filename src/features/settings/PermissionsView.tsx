@@ -12,9 +12,9 @@ import {
   Bluetooth as BluetoothIcon,
   XCircle,
 } from "lucide-react";
-import { Modal } from "@/components/Modal";
-import { useToast } from "@/providers/ToastProvider";
-import { usePreferences } from "@/providers/PreferencesProvider";
+import { Modal } from "@/components/overlays/Modal";
+import { useToast } from "@/hooks/useToast";
+import { usePreferences } from "@/hooks/usePreferences";
 import { SettingsRow, SettingsRows } from "./parts";
 import {
   PERMISSION_LABEL,

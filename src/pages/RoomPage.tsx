@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -11,22 +11,28 @@ import {
   Headphones,
   Mic,
   MicOff,
-  PhoneOff,
+  MoreVertical,
   Radio,
   Send,
   Share2,
   Video,
 } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Button } from "@/components/Button";
-import { ConfirmDialog, Modal } from "@/components/Modal";
-import { EmptyState, ErrorState, PageSkeleton } from "@/components/States";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { count, relativeTime } from "@/lib/format";
-import { useAuth } from "@/providers/AuthProvider";
-import { useSocket, useSocketEvent } from "@/providers/SocketProvider";
-import { useToast } from "@/providers/ToastProvider";
+import { Avatar } from "@/components/ui/Avatar";
+import { Button } from "@/components/ui/Button";
+import { ConfirmDialog, Modal } from "@/components/overlays/Modal";
+import { EmptyState, ErrorState, PageSkeleton } from "@/components/ui/States";
+import { cn } from "@/utils/cn";
+import { count, relativeTime } from "@/utils/format";
+import { RoomCover, crowdLine, whenRoom } from "@/features/live/parts";
+import { ReportSheet } from "@/features/report/ReportSheet";
+import { RoomSoundView, MEDIA_LISTENERS } from "@/features/rooms/RoomSoundView";
+import { useRoomStage } from "@/features/rooms/useRoomStage";
+import { useAuth } from "@/hooks/useAuth";
+import { useSocket, useSocketEvent } from "@/hooks/useSocket";
+import { chatService } from "@/services/chat.service";
+import { spacesService } from "@/services/spaces.service";
+import { cachedRoom } from "@/store/seed";
+import { useToast } from "@/hooks/useToast";
 import type { SpacePerson, SpaceRoom, ThreadCard, UserCard } from "@/types/api";
 
 interface RoomGame {
@@ -47,15 +53,6 @@ interface RoomGame {
   line?: number[];
   moves?: number;
   legal?: number[][];
-}
-
-interface GameOffer {
-  kind: string;
-  name: string;
-  blurb: string;
-  cols: number;
-  rows: number;
-  bundled?: boolean;
 }
 
 interface ChatLine {
@@ -145,8 +142,23 @@ function Board({
   );
 }
 
+/** One row of the room's three dots — the app's `PopupMenuItem`. */
+function MenuItem({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onPress}
+      className="block w-full px-3.5 py-2.5 text-left text-[13px] font-semibold transition hover:bg-[color-mix(in_srgb,var(--ink)_5%,transparent)]"
+    >
+      {label}
+    </button>
+  );
+}
+
 export function RoomPage() {
   const { roomId = "" } = useParams();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { status, send } = useSocket();
   const { toast } = useToast();
@@ -155,27 +167,34 @@ export function RoomPage() {
   const [draft, setDraft] = useState("");
   const [throws, setThrows] = useState<{ id: string; name: string; emoji: string }[]>([]);
   const [busy, setBusy] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [endOpen, setEndOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [gameOpen, setGameOpen] = useState(false);
   const [sharing, setSharing] = useState(false);
   const joined = useRef<string | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
 
+  // The shelf's own row for this room, drawn on the first frame. A room is
+  // opened from a shelf that is still cached, so its title, host and crowd are
+  // already in hand; the room's own read replaces them when it lands.
+  const seed = useMemo(() => cachedRoom(queryClient, roomId), [queryClient, roomId]);
   const roomQuery = useQuery({
     queryKey: ["room", roomId],
-    queryFn: () => api.get<{ room: SpaceRoom }>(`/spaces/${roomId}/`),
+    queryFn: () => spacesService.room(roomId),
     enabled: Boolean(roomId),
     refetchInterval: 20_000,
+    placeholderData: seed ? { room: seed } : undefined,
   });
   const gamesQuery = useQuery({
     queryKey: ["spaces-games"],
-    queryFn: () => api.get<{ games: GameOffer[] }>("/spaces/games/"),
+    queryFn: () => spacesService.games(),
     enabled: gameOpen,
   });
   const threads = useQuery({
     queryKey: ["threads-share"],
-    queryFn: () => api.get<{ threads: ThreadCard[] }>("/chat/threads/"),
+    queryFn: () => chatService.threads(),
     enabled: shareOpen,
     staleTime: 20_000,
   });
@@ -186,23 +205,30 @@ export function RoomPage() {
   const stage = room?.stage ?? [];
   const raised = room?.raised ?? [];
 
+  // The room as it is heard, built from the room row the page already has:
+  // joining a room is reading it, and there is no second request to keep in
+  // step with the first.
+  const sound = useRoomStage({ room, selfId: user?.id ?? "" });
+
   function updateRoom(next: SpaceRoom) {
     queryClient.setQueryData(["room", roomId], { room: next });
   }
 
   async function act(path: string, body?: unknown) {
-    if (busy) return;
+    if (busy) return false;
     setBusy(true);
     try {
-      const result = await api.post<{ room: SpaceRoom }>(`/spaces/${roomId}/${path}/`, body);
+      const result = await spacesService.action(roomId, path, body);
       updateRoom(result.room);
       await queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      return true;
     } catch (error) {
       toast({
         title: "That did not work",
         description: error instanceof Error ? error.message : "Try again.",
         tone: "error",
       });
+      return false;
     } finally {
       setBusy(false);
     }
@@ -219,7 +245,7 @@ export function RoomPage() {
   useEffect(() => {
     if (!room || room.state !== "live" || room.me?.in || joined.current === room.id) return;
     joined.current = room.id;
-    void api.post<{ room: SpaceRoom }>(`/spaces/${room.id}/join/`).then((result) => updateRoom(result.room)).catch(() => {
+    void spacesService.join(room.id).then((result) => updateRoom(result.room)).catch(() => {
       joined.current = null;
     });
     // The room is the only thing that decides whether this has happened.
@@ -278,7 +304,7 @@ export function RoomPage() {
     if (!room || sharing) return;
     setSharing(true);
     try {
-      await api.post(`/spaces/${room.id}/share/`, { thread: thread.id });
+      await spacesService.share(room.id, thread.id);
       setShareOpen(false);
       toast({ title: "Sent to the convo", tone: "success" });
     } catch (error) {
@@ -292,6 +318,60 @@ export function RoomPage() {
     }
   }
 
+  /**
+   * The room as a line somebody can send to somebody else.
+   *
+   * The app's `roomLine`: who is holding it, what kind of thing it is, and its
+   * name. The web adds the address, because a browser share with no link in it
+   * asks the person on the other end to go and find the room themselves.
+   */
+  function shareLine() {
+    if (!room) return "";
+    const who = room.host?.name || room.host?.username || "Somebody";
+    const what = room.kind === "stream" ? "is live" : room.kind === "ama" ? "is taking questions" : "is on";
+    const url = `${window.location.origin}/app/live/${room.id}`;
+    return `${who} ${what}: ${room.title} — on Live in Xelvic. ${url}`;
+  }
+
+  /**
+   * Hand the room to whatever this browser shares with, and fall back to the
+   * clipboard when it has nowhere to send it — the app's `shareOutOfApp`, with
+   * the same bargain: a dismissed sheet writes nothing and says nothing.
+   */
+  async function shareOutside() {
+    if (!room) return;
+    const text = shareLine();
+    if (typeof navigator.share === "function") {
+      try {
+        await navigator.share({ title: room.title, text });
+        setShareOpen(false);
+        return;
+      } catch (error) {
+        if ((error as DOMException)?.name === "AbortError") return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setShareOpen(false);
+      toast({ title: "Copied to the clipboard instead.", tone: "success" });
+    } catch {
+      toast({ title: "The room's words are ready", description: text, tone: "info" });
+    }
+  }
+
+  async function startNow() {
+    setMenuOpen(false);
+    await act("start");
+  }
+
+  async function leaveQuietly() {
+    setMenuOpen(false);
+    // Out of the room first, then off the page: a screen that closes before the
+    // server has said it is out leaves a listener behind in a room they think
+    // they left.
+    if (await act("leave")) navigate(-1);
+  }
+
   const host = room?.me?.host || room?.mine;
   const onStage = Boolean(room?.me?.in && room.me.role !== "listener");
   const isLive = room?.state === "live";
@@ -303,29 +383,80 @@ export function RoomPage() {
           <button type="button" onClick={() => window.history.back()} className="icon-btn -ml-2" aria-label="Back">
             <ArrowLeft className="size-5" />
           </button>
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-[16px] font-extrabold tracking-tight">{room?.title || "Room"}</h1>
-            <p className="flex items-center gap-1.5 text-[10px] text-dim">
-              <span className={cn("size-1.5 rounded-full", isLive ? "bg-[#e02d5a]" : "bg-dim")} />
-              {room?.state === "live" ? `${count(room.listeners)} listening` : room?.state || "room"}
-              {room?.kind ? ` · ${room.kind}` : ""}
-            </p>
-          </div>
-          <button type="button" onClick={() => setShareOpen(true)} className="icon-btn" aria-label="Share room">
-            <Share2 className="size-4" />
-          </button>
-          {host && isLive ? (
-            <Button size="sm" variant="danger" onClick={() => setEndOpen(true)} icon={<PhoneOff className="size-3.5" />}>
-              <span className="hidden sm:inline">End</span>
-            </Button>
-          ) : null}
+          {room ? (
+            <>
+              <RoomCover room={room} size={34} radius={10} />
+              <div className="min-w-0 flex-1">
+                <h1 className="truncate text-[16px] font-extrabold tracking-tight">{room.title || "Room"}</h1>
+                <p className="truncate text-[10px] text-dim">
+                  {room.host?.name || room.host?.username || "Somebody"} · {crowdLine(room)}
+                </p>
+              </div>
+              {/* What state the room is in, in the app's three words: over, when
+                  it starts, or the badge. Only the badge carries colour — the
+                  other two are sentences. */}
+              {room.state === "ended" ? (
+                <span className="shrink-0 text-[10px] font-extrabold tracking-[0.6px] text-dim">Over</span>
+              ) : room.state === "scheduled" ? (
+                <span className="shrink-0 text-[11px] font-semibold text-dim">{whenRoom(room.starts_at)}</span>
+              ) : (
+                <span className="shrink-0 rounded-[5px] bg-accent px-[7px] py-[3px] text-[9.5px] font-black tracking-[0.8px] text-on-accent">LIVE</span>
+              )}
+              {/* The three dots. Everything that ends something lives here and
+                  nowhere else: closing a room and walking out are the two acts
+                  with no way back, and the bottom of a screen full of people is
+                  where a thumb lands by accident. Reporting sits here too — a
+                  stage has nowhere to put a long-press menu, so the room is what
+                  is reported and its host is who the queue reads it against. */}
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setMenuOpen((open) => !open)}
+                  className="icon-btn"
+                  aria-label="Room menu"
+                  aria-expanded={menuOpen}
+                  aria-haspopup="menu"
+                >
+                  <MoreVertical className="size-5" />
+                </button>
+                {menuOpen ? (
+                  <>
+                    <button
+                      type="button"
+                      aria-label="Close the menu"
+                      onClick={() => setMenuOpen(false)}
+                      className="fixed inset-0 z-40 cursor-default"
+                      tabIndex={-1}
+                    />
+                    <div role="menu" className="absolute right-0 top-full z-50 mt-1 w-52 overflow-hidden rounded-[14px] border border-line bg-card py-1 shadow-xl">
+                      {host && room.state === "scheduled" ? (
+                        <MenuItem label="Start now" onPress={() => void startNow()} />
+                      ) : null}
+                      <MenuItem label="Share the room" onPress={() => { setMenuOpen(false); setShareOpen(true); }} />
+                      {!host && room.state !== "scheduled" ? (
+                        <MenuItem label="Report the room" onPress={() => { setMenuOpen(false); setReportOpen(true); }} />
+                      ) : null}
+                      {host && isLive ? (
+                        <MenuItem label="Close the room" onPress={() => { setMenuOpen(false); setEndOpen(true); }} />
+                      ) : null}
+                      {room.me?.in ? (
+                        <MenuItem label="Leave quietly" onPress={() => void leaveQuietly()} />
+                      ) : null}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <div className="min-w-0 flex-1" />
+          )}
         </div>
       </header>
 
       <main className="mx-auto w-full max-w-[1100px] px-4 py-4 md:px-6">
         {roomQuery.isLoading ? (
           <PageSkeleton rows={3} />
-        ) : roomQuery.isError ? (
+        ) : roomQuery.isError && !room ? (
           <div className="card"><ErrorState error={roomQuery.error} onRetry={() => void roomQuery.refetch()} /></div>
         ) : !room ? (
           <div className="card"><EmptyState icon={<Radio className="size-6" />} title="This room is not here" body="It may have ended or the link may be wrong." action={<Link to="/app/live" className="btn btn-primary">Back to Live</Link>} /></div>
@@ -346,8 +477,13 @@ export function RoomPage() {
                   <span className="rounded-full bg-[var(--accent-soft)] px-2 py-1 text-[9px] font-extrabold uppercase tracking-wider text-accent">{room.state}</span>
                 </div>
                 {room.starts_at && room.state === "scheduled" ? (
-                  <div className="mt-3 rounded-[12px] border border-line bg-card px-3 py-2 text-[11px] text-dim">
-                    Starts {relativeTime(room.starts_at)}. The room opens when the host starts it.
+                  <div className="mt-3 rounded-[12px] border border-line bg-card px-3 py-2.5">
+                    <p className="text-[14px] font-extrabold">{whenRoom(room.starts_at)}</p>
+                    <p className="mt-1 text-[11px] leading-5 text-dim">
+                      {host
+                        ? "It is announced. Start it whenever you are ready, and everybody who follows you is told."
+                        : "It has not started. You will find it on the shelf when it does."}
+                    </p>
                   </div>
                 ) : null}
               </section>
@@ -364,38 +500,87 @@ export function RoomPage() {
                 <div className="rounded-[16px] border border-line bg-card px-4 py-3 text-center text-[12px] text-dim">This room is over.</div>
               ) : null}
 
-              {stage.length ? (
+              {sound.state.call ? (
+                <RoomSoundView
+                  stage={stage}
+                  sound={sound}
+                  selfId={user?.id ?? ""}
+                  kind={room.kind}
+                  onFlip={sound.flipCamera}
+                  onMirror={sound.toggleRemoteMirror}
+                />
+              ) : null}
+
+              {/* A listener the relay has no room for is in the room and is
+                  simply not sent anything: the server carries the stage plus
+                  its first eight listeners, and everybody past that reads the
+                  room without hearing it. Saying so is the difference between
+                  a silence somebody can act on and a silence that looks like a
+                  fault. */}
+              {room.state === "live" && room.me?.in && room.me?.hears === false ? (
+                <div className="rounded-[14px] border border-line bg-[color-mix(in_srgb,var(--ink)_4%,transparent)] px-3 py-2.5">
+                  <p className="text-[11px] font-extrabold">The room&rsquo;s sound is full</p>
+                  <p className="mt-1 text-[10px] leading-4 text-dim">
+                    The relay carries the stage and {MEDIA_LISTENERS} listeners at a time, and they are all
+                    taken. You are still in the room and you will hear it the moment a seat frees up.
+                  </p>
+                </div>
+              ) : null}
+
+              {stage.length && host ? (
+                <section>
+                  <div className="mb-2 flex items-center justify-between">
+                    <h2 className="text-[13px] font-extrabold">The seats</h2>
+                    <span className="text-[10px] text-dim">{stage.length} seats</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {stage.map((person) => (
+                      <div key={person.user} className="flex items-center gap-3 rounded-[12px] border border-line bg-card px-3 py-2">
+                        <Avatar user={personCard(person)} size={30} />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[11px] font-extrabold">{person.name || person.username}</p>
+                          <p className="flex items-center gap-1 text-[9px] text-dim">
+                            {person.role === "host" ? <Crown className="size-3 text-accent" /> : null}
+                            {person.muted ? <MicOff className="size-3" /> : <Mic className="size-3" />}
+                            {person.camera ? <Camera className="size-3" /> : null}
+                            {person.role}
+                          </p>
+                        </div>
+                        {person.role !== "host" ? (
+                          <div className="flex shrink-0 gap-1">
+                            <button type="button" disabled={busy} onClick={() => void act("dismiss", { user: person.user })} className="rounded bg-[color-mix(in_srgb,var(--ink)_6%,transparent)] px-1.5 py-1 text-[9px] font-bold text-dim hover:text-ink">Step down</button>
+                            <button type="button" disabled={busy} onClick={() => void act("mute", { user: person.user, muted: !person.muted })} className="rounded bg-[color-mix(in_srgb,var(--ink)_6%,transparent)] px-1.5 py-1 text-[9px] font-bold text-dim hover:text-ink">{person.muted ? "Unmute" : "Mute"}</button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
+              {stage.length && !host && !sound.state.call ? (
                 <section>
                   <div className="mb-2 flex items-center justify-between">
                     <h2 className="text-[13px] font-extrabold">On stage</h2>
                     <span className="text-[10px] text-dim">{stage.length} seats</span>
                   </div>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                    {stage.map((person) => {
-                      const card = personCard(person);
-                      return (
-                        <div key={person.user} className="relative overflow-hidden rounded-[16px] border border-line bg-card p-3">
-                          <div className="flex items-center gap-2.5">
-                            <Avatar user={card} size={36} />
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-[11px] font-extrabold">{person.name || person.username}</p>
-                              <p className="flex items-center gap-1 text-[9px] text-dim">
-                                {person.role === "host" ? <Crown className="size-3 text-accent" /> : null}
-                                {person.muted ? <MicOff className="size-3" /> : <Mic className="size-3" />}
-                                {person.camera ? <Camera className="size-3" /> : null}
-                                {person.role}
-                              </p>
-                            </div>
+                    {stage.map((person) => (
+                      <div key={person.user} className="relative overflow-hidden rounded-[16px] border border-line bg-card p-3">
+                        <div className="flex items-center gap-2.5">
+                          <Avatar user={personCard(person)} size={36} />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-[11px] font-extrabold">{person.name || person.username}</p>
+                            <p className="flex items-center gap-1 text-[9px] text-dim">
+                              {person.role === "host" ? <Crown className="size-3 text-accent" /> : null}
+                              {person.muted ? <MicOff className="size-3" /> : <Mic className="size-3" />}
+                              {person.camera ? <Camera className="size-3" /> : null}
+                              {person.role}
+                            </p>
                           </div>
-                          {host && person.role !== "host" ? (
-                            <div className="mt-2 flex gap-1">
-                              <button type="button" disabled={busy} onClick={() => void act("dismiss", { user: person.user })} className="rounded bg-[color-mix(in_srgb,var(--ink)_6%,transparent)] px-1.5 py-1 text-[9px] font-bold text-dim hover:text-ink">Step down</button>
-                              <button type="button" disabled={busy} onClick={() => void act("mute", { user: person.user, muted: !person.muted })} className="rounded bg-[color-mix(in_srgb,var(--ink)_6%,transparent)] px-1.5 py-1 text-[9px] font-bold text-dim hover:text-ink">{person.muted ? "Unmute" : "Mute"}</button>
-                            </div>
-                          ) : null}
                         </div>
-                      );
-                    })}
+                      </div>
+                    ))}
                   </div>
                 </section>
               ) : null}
@@ -539,6 +724,7 @@ export function RoomPage() {
                   <li>Anyone can listen. Raise a hand to ask for the stage.</li>
                   <li>The host brings people up and can mute a speaker.</li>
                   <li>What is said in the room chat stays in the room.</li>
+                  <li className="text-ink">The stage is carried live to every listener, peer to peer. A room holds the stage plus its first {MEDIA_LISTENERS} listeners.</li>
                 </ul>
               </div>
             </aside>
@@ -575,8 +761,8 @@ export function RoomPage() {
         </div>
       </Modal>
 
-      <Modal open={shareOpen} onClose={() => setShareOpen(false)} title="Share this room" description="Put the room in a convo.">
-        <div className="px-5 py-4">
+      <Modal open={shareOpen} onClose={() => setShareOpen(false)} title="Share this room" description="A convo inside Xelvic, or anywhere else.">
+        <div className="px-5 pt-4">
           {threads.isLoading ? <p className="py-5 text-xs text-dim">Loading convos...</p> : threads.isError ? <ErrorState compact error={threads.error} onRetry={() => void threads.refetch()} /> : !threads.data?.threads.length ? <p className="py-5 text-xs text-dim">No convos yet.</p> : (
             <div className="max-h-[50dvh] space-y-1 overflow-y-auto">
               {threads.data.threads.slice(0, 20).map((thread) => {
@@ -593,7 +779,41 @@ export function RoomPage() {
             </div>
           )}
         </div>
+        {/* The row underneath the convos, as the app puts it: the convos are the
+            only thing a room can actually be *put* somewhere, and handing it
+            out of the app is the answer underneath them. */}
+        <div className="mt-1 border-t border-line px-3 pb-3 pt-2">
+          <button
+            type="button"
+            onClick={() => void shareOutside()}
+            className="flex w-full items-center gap-3 rounded-[12px] px-2 py-2.5 text-left transition hover:bg-[color-mix(in_srgb,var(--ink)_5%,transparent)]"
+          >
+            <span className="flex size-[34px] items-center justify-center rounded-full bg-[var(--accent-soft)] text-accent">
+              <Share2 className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[12.5px] font-bold">Share outside</span>
+              <span className="block truncate text-[10.5px] text-dim">Another app, or the clipboard.</span>
+            </span>
+          </button>
+        </div>
       </Modal>
+
+      {/* Filing a complaint about the room, which is the only long-press-free
+          surface in the app for one: the host is who the queue reads it
+          against, and the room's own name says what is being reported. */}
+      {room ? (
+        <ReportSheet
+          open={reportOpen}
+          onClose={() => setReportOpen(false)}
+          kind="room"
+          id={room.id}
+          who={room.host?.name || room.host?.username || "Somebody"}
+          handle={room.host?.username}
+          avatar={room.host?.avatar}
+          preview={room.title}
+        />
+      ) : null}
 
       <ConfirmDialog
         open={endOpen}
@@ -602,9 +822,9 @@ export function RoomPage() {
           setEndOpen(false);
           void act("end");
         }}
-        title="End this room?"
-        body="Everybody is taken out, the stage closes, and the room cannot be reopened."
-        confirmLabel="End the room"
+        title="Close the room?"
+        body="Everybody is put out and the room is closed for good. This cannot be undone."
+        confirmLabel="Close it"
         destructive
         loading={busy}
       />

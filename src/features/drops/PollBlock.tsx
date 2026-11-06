@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, CircleX, Clock, GripVertical, Lock } from "lucide-react";
-import { AuthedImage } from "@/components/Media";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { errorMessage } from "@/lib/errors";
-import { useToast } from "@/providers/ToastProvider";
+import { AuthedImage } from "@/components/media/Media";
+import { cn } from "@/utils/cn";
+import { errorMessage } from "@/utils/errors";
+import { useToast } from "@/hooks/useToast";
+import { dropsService } from "@/services/drops.service";
 import type { Drop, Poll, PollOption } from "@/types/api";
-import { dropPollAnswers, dropPollFoot, dropPollShare } from "./model";
+import { dropBase, dropPollAnswers, dropPollFoot, dropPollShare } from "./model";
 
 /**
  * A poll's answers, drawn the way `_poll` in `screens/drops.dart` draws them.
@@ -42,7 +42,7 @@ export function PollBlock({
 }
 
 async function sendVote(drop: Drop, body: Record<string, unknown>): Promise<Poll> {
-  const answer = await api.post<{ poll: Poll }>(`/drops/${drop.id}/poll/vote/`, body);
+  const answer = await dropsService.pollVote(dropBase(drop), drop.id, body);
   return answer.poll;
 }
 
@@ -143,7 +143,7 @@ function PollLine({
         {option.image_url ? (
           <PollThumb src={option.image_url} />
         ) : null}
-        <span className="min-w-0 flex-1 text-[14px] leading-[1.35]" style={{ fontWeight: mine ? 700 : 500 }}>
+        <span className="min-w-0 flex-1 break-words text-[14px] leading-[1.35]" style={{ fontWeight: mine ? 700 : 500 }}>
           {option.text}
         </span>
         {poll.results ? (
@@ -268,7 +268,7 @@ function ArrangePoll({
             className="mb-2 flex items-center rounded-[12px] border border-line bg-card px-[13px] py-2.5"
           >
             {option.image_url ? <PollThumb src={option.image_url} /> : null}
-            <span className="min-w-0 flex-1 text-[14px] leading-[1.35]">{option.text}</span>
+            <span className="min-w-0 flex-1 break-words text-[14px] leading-[1.35]">{option.text}</span>
             <button
               type="button"
               onClick={() => move(index, index - 1)}
@@ -315,7 +315,7 @@ function ArrangePoll({
             {index + 1}
           </span>
           {option.image_url ? <PollThumb src={option.image_url} /> : null}
-          <span className="min-w-0 flex-1 text-[14px] leading-[1.35]">{option.text}</span>
+          <span className="min-w-0 flex-1 break-words text-[14px] leading-[1.35]">{option.text}</span>
         </div>
       ))}
       {/* Drawn only once it is known: a poll that closed under somebody who

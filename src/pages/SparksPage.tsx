@@ -9,18 +9,20 @@ import {
   Trophy,
   UserPlus,
 } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Button } from "@/components/Button";
-import { PageHeader } from "@/components/Page";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { count, plural } from "@/lib/format";
-import { errorMessage } from "@/lib/errors";
-import { API_ORIGIN } from "@/lib/env";import { marketKeys } from "@/features/marketplace/queries";
-import { useAuth } from "@/providers/AuthProvider";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import { useToast } from "@/providers/ToastProvider";
-import type { WalletData, WalletEntry, WalletPerson } from "@/features/sparks/types";
+import { Avatar } from "@/components/ui/Avatar";
+import { Button } from "@/components/ui/Button";
+import { PageHeader } from "@/components/layout/Page";
+import { authService } from "@/services/auth.service";
+import { sparksService } from "@/services/sparks.service";
+import { cn } from "@/utils/cn";
+import { count, plural } from "@/utils/format";
+import { errorMessage } from "@/utils/errors";
+import { API_ORIGIN } from "@/config/env";
+import { marketKeys } from "@/store/marketplace";
+import { useAuth } from "@/hooks/useAuth";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useToast } from "@/hooks/useToast";
+import type { WalletEntry, WalletPerson } from "@/features/sparks/types";
 import type { Spark } from "@/types/api";
 
 /**
@@ -60,13 +62,6 @@ import type { Spark } from "@/types/api";
  * `refreshShelves` already invalidates this key after every buy — the balance
  * here moves without a request, exactly as the app's `_watchSparks` moves it.
  */
-interface SparksData {
-  sparks: Spark[];
-  total: number;
-  wallet: { balance: number; earned: number; spent: number; owned: string[]; owned_logos?: string[] };
-  catalog?: unknown;
-}
-
 interface ReferralAnswer {
   code: string;
   reward: number;
@@ -111,7 +106,7 @@ export function SparksPage() {
 
   const sparks = useQuery({
     queryKey: ["sparks"],
-    queryFn: () => api.get<SparksData>("/sparks/"),
+    queryFn: () => sparksService.list(),
     // The bolt beside a person on the People tab is a live run, and a run can
     // end while the page is open — the app redraws on every spark answer, and
     // its chat list already polls. Same cadence here.
@@ -120,7 +115,7 @@ export function SparksPage() {
 
   const book = useQuery({
     queryKey: marketKeys.wallet,
-    queryFn: () => api.get<WalletData>("/sparks/wallet/"),
+    queryFn: () => sparksService.wallet(),
   });
 
   /**
@@ -131,7 +126,7 @@ export function SparksPage() {
    */
   const referral = useQuery({
     queryKey: ["sparks-referral"],
-    queryFn: () => api.get<ReferralAnswer>("/auth/me/referral/"),
+    queryFn: () => authService.referral<ReferralAnswer>(),
     retry: false,
   });
 

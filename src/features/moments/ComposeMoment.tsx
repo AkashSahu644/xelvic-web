@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AtSign, Check, ImagePlus, LoaderCircle, ShieldAlert, Users, X } from "lucide-react";
-import { Button } from "@/components/Button";
-import { Modal } from "@/components/Modal";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { errorMessage } from "@/lib/errors";
-import { uploadAsset } from "@/lib/upload";
-import { useToast } from "@/providers/ToastProvider";
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/overlays/Modal";
+import { cn } from "@/utils/cn";
+import { errorMessage } from "@/utils/errors";
+import { uploadAsset } from "@/utils/upload";
+import { useToast } from "@/hooks/useToast";
+import { momentsService } from "@/services/moments.service";
 import type { UserCard } from "@/types/api";
 import {
   audienceIds,
@@ -117,7 +117,7 @@ export function ComposeMoment({
       }
       if (!items.length) items.push({ kind: "text", body: caption.trim() });
       setStage("Putting it up...");
-      await api.post("/moments/", {
+      await momentsService.post({
         items,
         audience: audience.mode,
         ...(audience.mode === "everyone" ? {} : { audience_users: audienceIds(audience) }),

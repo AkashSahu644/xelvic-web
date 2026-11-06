@@ -2,17 +2,17 @@ import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { CloudOff, Heart, MessageCircle } from "lucide-react";
-import { Blank } from "@/components/Blank";
-import { PageHeader, Tabs } from "@/components/Page";
-import { api } from "@/lib/api";
-import { ago } from "@/lib/format";
-import { errorMessage } from "@/lib/errors";
+import { Blank } from "@/components/ui/Blank";
+import { PageHeader, Tabs } from "@/components/layout/Page";
+import { dropsService } from "@/services/drops.service";
+import { ago } from "@/utils/format";
+import { errorMessage } from "@/utils/errors";
 import { trackLine, trackUnder } from "@/features/audio/parts";
 import { SavedRowLeading } from "@/features/saved/Leading";
 import { cardOf, kindOf } from "@/features/saved/model";
-import { usePlayer } from "@/providers/PlayerProvider";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import type { ActivityData, SavedThing } from "@/types/api";
+import { usePlayer } from "@/hooks/usePlayer";
+import { usePreferences } from "@/hooks/usePreferences";
+import type { SavedThing } from "@/types/api";
 
 /**
  * Liked and responded: everything this account has put a heart on or left a
@@ -120,7 +120,7 @@ export function ActivityPage() {
 
   const activity = useQuery({
     queryKey: ["activity", "mine"],
-    queryFn: () => api.get<ActivityData>("/drops/mine/activity/"),
+    queryFn: () => dropsService.activity(),
   });
 
   const felt = activity.data?.liked ?? [];

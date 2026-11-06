@@ -7,7 +7,7 @@
 // character exactly as they were.
 
 import { ThemeMarkArt, type ThemeMark } from "@/theme/ThemeMarkArt";
-import { cn } from "@/lib/cn";
+import { cn } from "@/utils/cn";
 import type { ThemeDesign, ThemePalette } from "@/theme/catalog";
 import { coverFor } from "@/theme/shelf";
 import type { CatalogueTheme } from "./types";

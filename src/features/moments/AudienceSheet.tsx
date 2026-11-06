@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, Circle, CloudOff, Lock, Users, UsersRound, EyeOff } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Button } from "@/components/Button";
-import { Modal } from "@/components/Modal";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
+import { CheckCircle2, ChevronDown, Circle, CloudOff, Lock, Users, UsersRound, EyeOff } from "lucide-react";
+import { Avatar } from "@/components/ui/Avatar";
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/overlays/Modal";
+import { cn } from "@/utils/cn";
+import { socialService } from "@/services/social.service";
 import type { UserCard } from "@/types/api";
 
 /**
@@ -49,7 +49,7 @@ export function audienceIds(audience: Audience): string[] {
   return audience.mode === "everyone" ? [] : audience.people.map((person) => String(person.id));
 }
 
-function useMentionable(query: string) {
+function useMentionable(query: string, enabled = true) {
   const [settled, setSettled] = useState("");
   useEffect(() => {
     const timer = window.setTimeout(() => setSettled(query.trim()), 250);
@@ -57,8 +57,9 @@ function useMentionable(query: string) {
   }, [query]);
   return useQuery({
     queryKey: ["moments-mentionable", settled],
-    queryFn: () => api.get<UserCard[]>("/social/mentionable/", { query: { q: settled } }),
+    queryFn: () => socialService.mentionable(settled),
     staleTime: 60_000,
+    enabled,
   });
 }
 
@@ -244,6 +245,257 @@ export function AudienceSheet({
         ) : null}
       </div>
     </Modal>
+  );
+}
+
+/**
+ * The same reach, as a menu rather than a sheet.
+ *
+ * The moment page's header is one line, so the answer it carries opens under
+ * the chip instead of over the whole screen. Picking Everyone is the whole
+ * answer and closes the menu; the two narrower reaches open the same list the
+ * sheet uses, in the same place, and Done puts it back on the page.
+ */
+export function AudienceMenu({
+  value,
+  onPick,
+  disabled,
+  compact = false,
+}: {
+  value: Audience;
+  onPick: (next: Audience) => void;
+  disabled?: boolean;
+  compact?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<AudienceMode>(value.mode);
+  const [picked, setPicked] = useState<UserCard[]>(value.people);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  const choosing = mode !== "everyone";
+  const people = useMentionable(open && choosing ? query : "", open && choosing);
+  const ReachIcon = audienceIcon(value);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const rows = useMemo(() => {
+    const seen = new Set<string>();
+    return (people.data ?? []).filter((person) => {
+      const id = String(person.id);
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+  }, [people.data]);
+
+  const on = (person: UserCard) =>
+    picked.some((row) => String(row.id) === String(person.id));
+
+  function toggle(person: UserCard) {
+    setPicked((current) =>
+      on(person)
+        ? current.filter((row) => String(row.id) !== String(person.id))
+        : [...current, person],
+    );
+  }
+
+  function openMenu() {
+    if (disabled) return;
+    setMode(value.mode);
+    setPicked(value.people);
+    setQuery("");
+    setOpen(true);
+  }
+
+  function choose(next: AudienceMode) {
+    if (next === "everyone") {
+      onPick(EVERYONE);
+      setOpen(false);
+      return;
+    }
+    setMode(next);
+  }
+
+  function done() {
+    onPick({ mode, people: mode === "everyone" ? [] : picked });
+    setOpen(false);
+  }
+
+  const explainer =
+    mode === "except"
+      ? "Everyone except the people you pick."
+      : mode === "only"
+        ? "Only the people you pick."
+        : "";
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => (open ? setOpen(false) : openMenu())}
+        disabled={disabled}
+        className={cn(
+          "inline-flex shrink-0 items-center rounded-full font-semibold transition hover:bg-[color-mix(in_srgb,currentColor_10%,transparent)] disabled:opacity-40",
+          compact ? "gap-1 px-2 py-1.5 text-[11.5px]" : "gap-1.5 px-2.5 py-1.5 text-[13px]",
+          open && "bg-[color-mix(in_srgb,currentColor_10%,transparent)]",
+        )}
+        aria-label={`Who this is for: ${audienceLabel(value)}`}
+        aria-expanded={open}
+        aria-haspopup="menu"
+      >
+        <ReachIcon className={compact ? "size-[16px]" : "size-[18px]"} aria-hidden />
+        <span className={cn("truncate", compact && "max-w-[88px]")}>
+          {audienceLabel(value)}
+        </span>
+        <ChevronDown
+          className={cn(
+            "shrink-0 opacity-60 transition-transform duration-200",
+            compact ? "size-3" : "size-3.5",
+            open && "rotate-180",
+          )}
+          aria-hidden
+        />
+      </button>
+
+      {open ? (
+        <div
+          role="menu"
+          className="absolute right-0 top-full z-50 mt-2 max-h-[calc(100dvh-6rem)] w-[min(19rem,calc(100vw-1.5rem))] overflow-y-auto overscroll-contain scroll-thin rounded-[16px] border border-line bg-card p-1.5 text-ink shadow-xl animate-fade-up"
+        >
+          <p className="px-2 pb-1 pt-0.5 text-[10px] font-extrabold uppercase tracking-[0.08em] text-dim">
+            Who this is for
+          </p>
+          {([
+            ["everyone", Users, "Everyone"],
+            ["except", EyeOff, "Hide from"],
+            ["only", Lock, "Only these"],
+          ] as const).map(([next, Icon, label]) => (
+            <button
+              key={next}
+              type="button"
+              role="menuitemradio"
+              aria-checked={mode === next}
+              onClick={() => choose(next)}
+              className={cn(
+                "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] font-semibold transition",
+                mode === next
+                  ? "bg-[var(--accent-soft)] text-accent"
+                  : "hover:bg-[color-mix(in_srgb,var(--ink)_5%,transparent)]",
+              )}
+            >
+              <Icon className="size-4 shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1">{label}</span>
+              {mode === next ? (
+                <CheckCircle2 className="size-4 shrink-0" aria-hidden />
+              ) : null}
+            </button>
+          ))}
+
+          {choosing ? (
+            <div className="mt-1 space-y-2 border-t border-line/70 px-0.5 pt-2">
+              <p className="px-1.5 text-[10.5px] leading-4 text-dim">
+                {explainer}
+              </p>
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search a name or @handle"
+                className="field h-9 w-full"
+              />
+              {people.isLoading ? (
+                <div className="space-y-1.5" aria-hidden>
+                  {[0, 1, 2].map((row) => (
+                    <div key={row} className="skeleton h-10 rounded-[10px]" />
+                  ))}
+                </div>
+              ) : people.isError ? (
+                <div className="flex items-center gap-2 rounded-[10px] border border-line bg-paper px-2.5 py-2 text-[11.5px] text-dim">
+                  <CloudOff className="size-4 shrink-0" />
+                  The list of people could not be reached.
+                </div>
+              ) : rows.length === 0 ? (
+                <div className="flex items-center gap-2 rounded-[10px] border border-line bg-paper px-2.5 py-2 text-[11.5px] text-dim">
+                  <UsersRound className="size-4 shrink-0" />
+                  {query.trim() ? "Nobody by that name." : "Nobody to name yet."}
+                </div>
+              ) : (
+                <div className="max-h-44 overflow-y-auto scroll-thin">
+                  {rows.map((person) => {
+                    const added = on(person);
+                    return (
+                      <button
+                        key={String(person.id)}
+                        type="button"
+                        onClick={() => toggle(person)}
+                        aria-pressed={added}
+                        className="flex w-full items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left transition hover:bg-[color-mix(in_srgb,var(--ink)_5%,transparent)]"
+                      >
+                        <Avatar user={person} size={28} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[12.5px] font-semibold">
+                            {person.name || person.username}
+                          </span>
+                          <span className="block truncate text-[10.5px] text-dim">
+                            @{person.username}
+                          </span>
+                        </span>
+                        {added ? (
+                          <CheckCircle2 className="size-4 shrink-0 text-accent" aria-hidden />
+                        ) : (
+                          <Circle className="size-4 shrink-0 text-dim" aria-hidden />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {picked.length ? (
+                <div className="flex max-h-20 flex-wrap gap-1.5 overflow-y-auto scroll-thin">
+                  {picked.map((person) => (
+                    <button
+                      key={String(person.id)}
+                      type="button"
+                      onClick={() => toggle(person)}
+                      className="chip inline-flex items-center gap-1"
+                      aria-label={`Remove ${person.name || person.username}`}
+                    >
+                      {person.name || person.username}
+                      <span aria-hidden>×</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <div className="flex items-center justify-between gap-2 border-t border-line/70 pt-2">
+                <span className="min-w-0 truncate text-[11px] text-dim">
+                  {picked.length ? `${picked.length} picked` : "Nobody picked"}
+                </span>
+                <button
+                  type="button"
+                  onClick={done}
+                  className="rounded-full bg-accent px-3 py-1.5 text-[12px] font-bold text-white transition hover:brightness-110"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

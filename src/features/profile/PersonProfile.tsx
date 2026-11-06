@@ -21,14 +21,15 @@ import {
   Flag,
   X,
 } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { AuthedImage } from "@/components/Media";
-import { Blank } from "@/components/Blank";
-import { ConfirmDialog, Modal } from "@/components/Modal";
-import { PageSkeleton } from "@/components/States";
-import { VerifiedTick } from "@/components/Tick";
+import { Avatar } from "@/components/ui/Avatar";
+import { AuthedImage } from "@/components/media/Media";
+import { Blank } from "@/components/ui/Blank";
+import { ConfirmDialog, Modal } from "@/components/overlays/Modal";
+import { PageSkeleton } from "@/components/ui/States";
+import { VerifiedTick } from "@/components/icons/Tick";
 import { MomentViewer } from "@/features/moments/MomentViewer";
 import { BirthdayFall } from "@/features/profile/BirthdayFall";
+import { isBirthdayTodayIn } from "@/features/profile/birthday";
 import { MemoriesShelf } from "@/features/profile/MemoriesShelf";
 import {
   FaceButton,
@@ -43,12 +44,16 @@ import { PosedBio } from "@/features/profile/PosedBio";
 import { ProfileShelf } from "@/features/profile/ProfileShelf";
 import { ProfessionalLead, ProfessionalPill, linkPillIcon } from "@/features/professional/parts";
 import { linkLabel } from "@/features/professional/model";
-import { api } from "@/lib/api";
-import { useAuth } from "@/providers/AuthProvider";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import { useTheme } from "@/providers/ThemeProvider";
-import { useToast } from "@/providers/ToastProvider";
-import type { ChatGate, Moment, MomentTray, Profile, Relation, UserCard } from "@/types/api";
+import { chatService } from "@/services/chat.service";
+import { dropsService } from "@/services/drops.service";
+import { momentsService } from "@/services/moments.service";
+import { useAuth } from "@/hooks/useAuth";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useTheme } from "@/hooks/useTheme";
+import { useToast } from "@/hooks/useToast";
+import { profileService } from "@/services/profile.service";
+import { socialService } from "@/services/social.service";
+import type { ChatGate, Moment, Profile, Relation, UserCard } from "@/types/api";
 
 /**
  * Somebody else's profile.
@@ -123,7 +128,7 @@ export function PersonProfile() {
 
   const answer = useQuery({
     queryKey: ["profile", username],
-    queryFn: () => api.get<Profile>(`/auth/users/${encodeURIComponent(username)}/`),
+    queryFn: () => profileService.byUsername(username),
     enabled: Boolean(username),
     // A deleted account is answered with a 410 and its own name for the
     // refusal; asking twice would only get the same answer.
@@ -152,7 +157,7 @@ export function PersonProfile() {
   useEffect(() => {
     if (!personId || isMe || visited.current === personId) return;
     visited.current = personId;
-    void api.post(`/social/users/${personId}/view/`, {}).catch(() => {
+    void socialService.seen(personId).catch(() => {
       // Swallowed on purpose — see above.
     });
   }, [personId, isMe]);
@@ -174,7 +179,7 @@ export function PersonProfile() {
    */
   const tray = useQuery({
     queryKey: ["moments-tray"],
-    queryFn: () => api.get<MomentTray>("/moments/tray/"),
+    queryFn: () => momentsService.tray(),
     enabled: !isMe && Boolean(personId) && !deleted,
     staleTime: 30_000,
     retry: false,
@@ -198,7 +203,7 @@ export function PersonProfile() {
   const name = profile?.name || handle;
   const trading = profile?.is_company ? String(profile?.category ?? "").trim() : "";
 
-  const birthdayToday = Boolean(profile?.birthday) && profile?.birthday === todayMonthDay();
+  const birthdayToday = isBirthdayTodayIn(profile);
 
   const following = relation?.following === true;
   const blocked = relation?.blocked_by_me === true || relation?.blocked_me === true;
@@ -256,15 +261,14 @@ export function PersonProfile() {
     if (!profile || busy) return;
     setBusy(true);
     try {
-      const path = `/social/users/${profile.id}/`;
       const next =
         what === "unfollow"
-          ? await api.delete<PeopleState>(`${path}follow/`)
+          ? await socialService.unfollow<PeopleState>(profile.id)
           : what === "withdraw"
-            ? await api.post<PeopleState>(`${path}withdraw/`)
+            ? await socialService.withdraw<PeopleState>(profile.id)
             : what === "unblock"
-              ? await api.delete<PeopleState>(`${path}block/`)
-              : await api.post<PeopleState>(`${path}follow/`);
+              ? await socialService.unblock<PeopleState>(profile.id)
+              : await socialService.follow<PeopleState>(profile.id);
       apply(next);
       await queryClient.invalidateQueries({ queryKey: ["profile", username] });
       await queryClient.invalidateQueries({ queryKey: ["feed"] });
@@ -285,9 +289,8 @@ export function PersonProfile() {
     if (!profile || busy) return;
     setBusy(true);
     try {
-      const result = await api.post<{ thread?: { id: string } | null; gate?: ChatGate }>(
-        "/chat/threads/",
-        { user: profile.id },
+      const result = await chatService.start<{ thread?: { id: string } | null; gate?: ChatGate }>(
+        profile.id,
       );
       if (result.thread?.id) {
         navigate(`/app/convo/${result.thread.id}`);
@@ -323,9 +326,7 @@ export function PersonProfile() {
     if (!handle || dayBusy) return;
     setDayBusy(true);
     try {
-      const response = await api.get<{ moments?: Moment[] }>(
-        `/moments/users/${encodeURIComponent(handle)}/`,
-      );
+      const response = await momentsService.byUser(handle);
       if (response.moments?.length) {
         setDay(response.moments);
       } else {
@@ -350,7 +351,7 @@ export function PersonProfile() {
     if (!profile) return;
     const next = !(muted ?? false);
     try {
-      await api.post(`/drops/mute/${profile.id}/`, { on: next });
+      await dropsService.muteAuthor(profile.id, next);
       setMuted(next);
       setMenu(false);
       toast({ title: next ? t("Posts muted") : t("Posts unmuted"), tone: "success" });
@@ -366,7 +367,7 @@ export function PersonProfile() {
   async function report() {
     if (!profile) return;
     try {
-      await api.post("/social/report/", { target_user: profile.id, reason: reportReason });
+      await socialService.report({ target_user: profile.id, reason: reportReason });
       setReportOpen(false);
       setMenu(false);
       toast({ title: t("Report sent"), description: t("Thank you. We will look at it."), tone: "success" });
@@ -651,7 +652,7 @@ export function PersonProfile() {
             all when there are none to show, so it costs a quiet account no room.
             No card that makes one: a Memory is theirs to put up. */}
         <div className="pt-4">
-          <MemoriesShelf username={handle} mine={false} />
+          <MemoriesShelf username={handle} mine={false} author={profile ?? null} />
         </div>
 
         {/* Their posts, under the business between us, and drawn only when the
@@ -928,10 +929,4 @@ function BirthdayCake() {
       <rect x="2.4" y="9.2" width="9.2" height="3.4" rx="1" fill="currentColor" />
     </svg>
   );
-}
-
-/** Today as `MM-DD`, which is the shape the server sends a birthday in. */
-function todayMonthDay(): string {
-  const now = new Date();
-  return `${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }

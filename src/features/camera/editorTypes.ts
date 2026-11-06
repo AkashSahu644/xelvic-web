@@ -203,3 +203,31 @@ export function frameForMode(mode: EditorMode, shotAspect: string): FrameKey {
   }
   return "portrait";
 }
+
+/**
+ * The ink for words written on one of the editor's own colours.
+ *
+ * The Background and Outline rows paint each pill in the colour it chooses and
+ * write the colour's name on top of it, so that name is read against the pill
+ * and not against the panel. The panel's own ink is right for the one pill that
+ * is the panel (`none`) and wrong for the rest: "White" was a near-white pill
+ * with white words on it in every theme, and once the panel itself became the
+ * theme's card, every label went the same way. A fixed black or white, picked by
+ * the colour's own luma, is the one pair that survives both themes and both ends
+ * of the row — the near-black at one end and the near-white at the other.
+ *
+ * `none` and anything too transparent to hide the panel behind it answer the
+ * panel's ink, because that is the ground they are actually read on.
+ */
+export function inkOn(value: string) {
+  if (value === "transparent") return "text-ink";
+  const parts = value.startsWith("#")
+    ? [1, 3, 5].map((at) => parseInt(value.slice(at, at + 2), 16))
+    : (value.match(/[\d.]+/g) ?? []).slice(0, 4).map(Number);
+  const [red, green, blue, alpha = 1] = parts;
+  if (![red, green, blue].every(Number.isFinite) || alpha < 0.5) {
+    return "text-ink";
+  }
+  const luma = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255;
+  return luma > 0.5 ? "text-[#111111]" : "text-white";
+}

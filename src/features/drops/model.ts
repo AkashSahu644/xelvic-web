@@ -1,4 +1,4 @@
-import { api } from "@/lib/api";
+import { dropsService } from "@/services/drops.service";
 import type { Asset, Drop, Poll } from "@/types/api";
 
 /**
@@ -43,6 +43,27 @@ export function dropPictures(drop: Drop): Asset[] {
 
 export function dropIsGallery(drop: Drop): boolean {
   return dropPictures(drop).length > 1;
+}
+
+/**
+ * The one clip a card draws, when it draws one — the app's own test, in one
+ * place because two things hang off the answer.
+ *
+ * `(drop.kind == 'video' || drop.isVibe) && asset.contentUrl.isNotEmpty` in
+ * `screens/drops.dart`, and the two things are the card playing the clip and a
+ * press on that clip opening the walk (`DropVideo.onOpen` → `_openFrame` →
+ * `openClip`). A card that played a clip nobody could open, or one that opened
+ * onto a picture with no clip in it, is the two halves of that rule disagreeing
+ * about one row.
+ *
+ * A gallery is not one: a post with several uploads pages through pictures, and
+ * the run is read before the first upload is ever played. A sound's own asset is
+ * the audio, so it is not a clip either — `kind` decides that, and `audio` is
+ * not `video`.
+ */
+export function dropIsClip(drop: Drop): boolean {
+  if (dropIsGallery(drop)) return false;
+  return (drop.kind === "video" || dropIsVibe(drop)) && Boolean(drop.asset?.content_url);
 }
 
 /**
@@ -164,7 +185,7 @@ export async function reportDropLook(drop: Drop): Promise<void> {
   if (looksSent.has(drop.id)) return;
   looksSent.add(drop.id);
   try {
-    await api.post(`/${dropBase(drop)}/${drop.id}/seen/`, {});
+    await dropsService.seen(dropBase(drop), drop.id);
   } catch {
     looksSent.delete(drop.id);
   }

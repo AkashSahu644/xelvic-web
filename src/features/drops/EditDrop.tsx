@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { Clapperboard, Image as ImageIcon, Play } from "lucide-react";
-import { Button } from "@/components/Button";
-import { AuthedImage } from "@/components/Media";
-import { Modal } from "@/components/Modal";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { errorMessage } from "@/lib/errors";
-import { useToast } from "@/providers/ToastProvider";
+import { Button } from "@/components/ui/Button";
+import { AuthedImage } from "@/components/media/Media";
+import { Modal } from "@/components/overlays/Modal";
+import { cn } from "@/utils/cn";
+import { errorMessage } from "@/utils/errors";
+import { useToast } from "@/hooks/useToast";
+import { dropsService } from "@/services/drops.service";
 import type { Drop } from "@/types/api";
 import { dropIsPicture, dropIsSound, dropIsVibe, dropStill } from "./model";
 
@@ -69,6 +69,32 @@ function editsPlace(drop: Drop): boolean {
   return drop.kind === "image" || drop.kind === "video" || drop.kind === "text";
 }
 
+/**
+ * The post a bare id names, from whichever of the two tables holds it.
+ *
+ * `?edit=<id>` is a link somebody was handed and an id is all it carries: a
+ * drop and a Vibe are two tables under two families of routes, and the URL does
+ * not say which. The page that opens the sheet usually has the post in hand and
+ * never comes here at all; this is the path for a link opened cold, where the
+ * only honest thing to do is ask, and the Vibe's own route is only asked when
+ * the drop's has said there is nothing there. A genuinely missing id therefore
+ * costs one extra request and reports the *first* error, which is the one that
+ * names the address the link actually used.
+ */
+async function readById(id: string): Promise<Drop | null> {
+  try {
+    const answer = await dropsService.detail("drops", id);
+    return answer.drop ?? null;
+  } catch (first) {
+    try {
+      const answer = await dropsService.detail("drops/vibes", id);
+      return answer.vibe ?? answer.drop ?? null;
+    } catch {
+      throw first;
+    }
+  }
+}
+
 export function EditDrop({
   drop: handed,
   dropId,
@@ -109,10 +135,9 @@ export function EditDrop({
     if (!dropId) return;
     let live = true;
     setReading(true);
-    void api
-      .get<{ drop: Drop }>(`/drops/${dropId}/`)
+    void readById(dropId)
       .then((answer) => {
-        if (live) setDrop(answer.drop);
+        if (live) setDrop(answer);
       })
       .catch((error) => {
         if (live) setTrouble(errorMessage(error));
@@ -163,10 +188,8 @@ export function EditDrop({
     setBusy(true);
     setTrouble(null);
     try {
-      const answer = dropIsVibe(drop)
-        ? await api.patch<{ vibe: Drop }>(`/${base}/${drop.id}/`, payload)
-        : await api.patch<{ drop: Drop }>(`/${base}/${drop.id}/`, payload);
-      const fresh = "vibe" in answer ? answer.vibe : answer.drop;
+      const answer = await dropsService.edit(base, drop.id, payload);
+      const fresh = ("vibe" in answer ? answer.vibe : answer.drop)!;
       toast({ title: "Saved.", tone: "success" });
       onSaved?.(fresh);
       onClose();

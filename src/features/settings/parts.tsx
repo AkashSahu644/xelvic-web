@@ -1,9 +1,9 @@
 import { type ReactNode } from "react";
 import { ArrowLeft, ChevronRight, Music2, Phone, Volume2 } from "lucide-react";
-import { Backdrop } from "@/components/Backdrop";
-import { Modal } from "@/components/Modal";
-import { cn } from "@/lib/cn";
-import type { ScreenBackdrop } from "@/providers/ThemeProvider";
+import { Backdrop } from "@/components/layout/Backdrop";
+import { Modal } from "@/components/overlays/Modal";
+import { cn } from "@/utils/cn";
+import type { ScreenBackdrop } from "@/hooks/useTheme";
 
 /**
  * The settings furniture: the page frame and the two row shapes every settings
@@ -172,11 +172,13 @@ export function SettingsSwitch({
   onChange,
   disabled,
   label,
+  tone,
 }: {
   on: boolean;
   onChange: () => void;
   disabled?: boolean;
   label: string;
+  tone?: string;
 }) {
   return (
     <button
@@ -189,15 +191,25 @@ export function SettingsSwitch({
         event.stopPropagation();
         onChange();
       }}
+      style={
+        on && tone
+          ? {
+              backgroundColor: tone,
+              boxShadow: `inset 0 1px 1px rgb(255 255 255 / 0.18), 0 0 0 3px color-mix(in srgb, ${tone} 12%, transparent)`,
+            }
+          : undefined
+      }
       className={cn(
-        "relative h-[30px] w-[51px] shrink-0 rounded-full transition disabled:opacity-45",
-        on ? "bg-accent" : "bg-[color-mix(in_srgb,var(--ink)_14%,transparent)]",
+        "relative h-6 w-12 shrink-0 rounded-full transition-[background-color,box-shadow,opacity] duration-300 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_srgb,var(--accent)_45%,transparent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--page)] disabled:opacity-45",
+        on
+          ? "bg-accent shadow-[inset_0_1px_1px_rgb(255_255_255_/_0.18),0_0_0_3px_color-mix(in_srgb,var(--accent)_12%,transparent)]"
+          : "bg-[color-mix(in_srgb,var(--ink)_14%,transparent)] shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--ink)_8%,transparent)]",
       )}
     >
       <span
         className={cn(
-          "absolute top-[3px] size-6 rounded-full shadow-sm transition",
-          on ? "left-[21px] bg-white" : "left-[3px] bg-[var(--dim)]",
+          "absolute left-[3px] top-1/2 size-[18px] -translate-y-1/2 rounded-full bg-white shadow-[0_1px_3px_rgb(8_8_12_/_0.22)] transition-transform duration-300 ease-out",
+          on ? "translate-x-[24px]" : "translate-x-0",
         )}
       />
     </button>

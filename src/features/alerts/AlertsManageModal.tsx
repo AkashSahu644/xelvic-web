@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BellOff, BellRing, Pin, PinOff } from "lucide-react";
-import { Modal } from "@/components/Modal";
-import { Spinner } from "@/components/Button";
+import { Modal } from "@/components/overlays/Modal";
+import { Spinner } from "@/components/ui/Button";
 import { PIN_MAX } from "@/features/convo/skin";
-import { errorMessage } from "@/lib/errors";
-import { useToast } from "@/providers/ToastProvider";
-import { setAlertFlags } from "./useAlerts";
+import { errorMessage } from "@/utils/errors";
+import { useToast } from "@/hooks/useToast";
+import { setAlertFlags } from "@/store/alerts";
 import type { AlertsPageData } from "@/types/api";
 
 export function AlertsManageModal({

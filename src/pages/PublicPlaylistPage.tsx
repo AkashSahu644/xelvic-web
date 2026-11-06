@@ -1,15 +1,14 @@
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ListMusic, Pause, Play, SkipBack, SkipForward } from "lucide-react";
-import { BrandMark } from "@/components/Brand";
-import { Button } from "@/components/Button";
-import { AuthedImage } from "@/components/Media";
-import { ErrorState } from "@/components/States";
+import { BrandMark } from "@/components/icons/Brand";
+import { Button } from "@/components/ui/Button";
+import { AuthedImage } from "@/components/media/Media";
+import { ErrorState } from "@/components/ui/States";
 import { TrackRow } from "@/features/audio/TrackRow";
-import { api } from "@/lib/api";
-import { count, duration } from "@/lib/format";
-import { usePlayer } from "@/providers/PlayerProvider";
-import type { Playlist, Track } from "@/types/api";
+import { audioService } from "@/services/audio.service";
+import { count, duration } from "@/utils/format";
+import { usePlayer } from "@/hooks/usePlayer";
 
 function PublicPlayerBar() {
   const player = usePlayer();
@@ -59,7 +58,7 @@ export function PublicPlaylistPage() {
   const player = usePlayer();
   const detail = useQuery({
     queryKey: ["public-playlist", token],
-    queryFn: () => api.get<{ playlist: Playlist; tracks: Track[] }>(`/audio/shared/${token}/`, { auth: false }),
+    queryFn: () => audioService.shared(token),
     enabled: Boolean(token),
     retry: false,
   });

@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { ImageOff } from "lucide-react";
-import { AuthedImage, AuthedVideo } from "@/components/Media";
-import { useMediaUrl } from "@/lib/media";
+import { AuthedImage, AuthedVideo } from "@/components/media/Media";
+import { useMediaUrl } from "@/hooks/useMediaUrl";
 import type { Asset, Sticker, UserCard } from "@/types/api";
 
 /**

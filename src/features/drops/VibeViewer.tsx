@@ -21,14 +21,15 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { AuthedVideo } from "@/components/Media";
-import { VerifiedTick } from "@/components/Tick";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { count } from "@/lib/format";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import { savedKindOf, useSaved } from "@/features/saved/store";
+import { Avatar } from "@/components/ui/Avatar";
+import { AuthedImage, AuthedVideo } from "@/components/media/Media";
+import { VerifiedTick } from "@/components/icons/Tick";
+import { dropsService } from "@/services/drops.service";
+import { cn } from "@/utils/cn";
+import { count } from "@/utils/format";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useSaved } from "@/hooks/useSaved";
+import { savedKindOf } from "@/store/saved";
 
 import type { Drop } from "@/types/api";
 import { CommentsModal } from "./CommentsModal";
@@ -39,7 +40,8 @@ import { ShareSheet } from "./ShareSheet";
 import { StatsSheet } from "./StatsSheet";
 import { dropBase, reportDropLook } from "./model";
 import { reportVibeLook, reportVibesShown } from "./reco";
-import { useVibeEnd, type VibeEnd } from "./vibeEnd";
+import { useVibeEnd, type VibeEnd } from "@/hooks/useVibeEnd";
+import { lockScroll } from "@/utils/scrollLock";
 
 /**
  * Vibes: clips walked one at a time, filling the screen.
@@ -187,8 +189,10 @@ export function VibeViewer({
   }, [at, vibes.length]);
 
   useEffect(() => {
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    // Counted, and this is one of the two effects that made counting necessary:
+    // it re-runs as the walk moves and as the panels open, and each re-run used
+    // to write back the value it had read before whatever opened meanwhile.
+    const releaseScroll = lockScroll();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -219,12 +223,29 @@ export function VibeViewer({
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = previous;
+      releaseScroll();
     };
   }, [at, onClose, playerFor]);
 
   return createPortal(
-    <div className="fixed inset-0 z-[95] bg-black text-white" role="dialog" aria-modal="true" aria-label="Vibes">
+    // `h-[100dvh]` rather than `inset-0`: a fixed box with all four edges pinned
+    // resolves against the *layout* viewport, which on a phone is the tall one —
+    // so with a browser bar on screen the strip along the bottom (the caption,
+    // the comment rail, the clip's own player panel) sat underneath it, and the
+    // page's scroll is locked while the walk is up, so nothing could bring them
+    // back. The children are `h-full`, so they follow this height.
+    <div
+      className="fixed inset-x-0 top-0 z-[95] h-[100dvh] bg-black text-white"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Vibes"
+    >
+      {/* A phone-shaped stage rather than controls pinned to the edges of a
+          desktop window. The clip is a portrait screen and the bar, rail and
+          caption belong to it; on a wide display they were spread across two
+          empty black wings with the video stranded in the middle. On a phone
+          this is simply the screen. */}
+      <div className="relative mx-auto h-full w-full max-w-[480px] overflow-hidden">
       {/* The bar floats over every page rather than sitting in the column: the
           clips are the screen and the controls are drawn on the one in front. */}
       <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center gap-1 px-2 pb-2.5 pt-[calc(env(safe-area-inset-top,0px)_+_6px)]">
@@ -281,6 +302,11 @@ export function VibeViewer({
             key={String(vibe.id)}
             vibe={vibe}
             active={page === at}
+            // Only the clip in front and its two neighbours are asked for.
+            // The first version mounted a player for every clip in the hand —
+            // thirty downloads and thirty decoders for a walk that starts on
+            // one — which is why opening Vibes took as long as it did.
+            near={Math.abs(page - at) <= 1}
             muted={muted}
             onToggleMute={() => setMuted((value) => !value)}
             playerOpen={playerFor === String(vibe.id)}
@@ -291,6 +317,7 @@ export function VibeViewer({
             showHint={hint && page === at && page < vibes.length - 1}
           />
         ))}
+      </div>
       </div>
 
       {/* The menu and the two sheets it can open belong to the *walk* rather
@@ -353,6 +380,7 @@ function TopButton({
 function Slide({
   vibe: incoming,
   active,
+  near,
   muted,
   onToggleMute,
   playerOpen,
@@ -364,6 +392,8 @@ function Slide({
 }: {
   vibe: Drop;
   active: boolean;
+  /** Whether this slide is close enough to the thumb to hold a player. */
+  near: boolean;
   muted: boolean;
   onToggleMute: () => void;
   playerOpen: boolean;
@@ -605,16 +635,17 @@ function Slide({
       return;
     }
     if (active && !paused) void element.play().catch(() => setPaused(true));
-  }, [held, active, paused]);
+  }, [held, active, paused, near]);
 
   // The rate the clip is running at: the panel's choice, unless a finger is on
   // the fast pad. The same reading is re-applied on every tick in
   // `onTimeUpdate`, because a player that mounts after the first frame is not
-  // there when this effect runs.
+  // there when this effect runs. `near` is a dependency for the same reason:
+  // a slide swiped towards mounts its player after this has already run once.
   useEffect(() => {
     const element = video.current;
     if (element) element.playbackRate = fast ? FAST : rate;
-  }, [fast, rate, active]);
+  }, [fast, rate, active, near]);
 
   // How tall the strip drew itself. The hint is drawn above the strip and not
   // at a number picked off a screen, because a hint over the suggestion a
@@ -636,10 +667,7 @@ function Slide({
     setLiked(on);
     setLikes((value) => Math.max(0, value + (on ? 1 : -1)));
     try {
-      const answer = await api.post<{ likes: number; liked: boolean }>(
-        `/${dropBase(vibe)}/${vibe.id}/like/`,
-        { on },
-      );
+      const answer = await dropsService.like(dropBase(vibe), vibe.id, on);
       setLiked(answer.liked);
       setLikes(answer.likes);
     } catch {
@@ -767,51 +795,63 @@ function Slide({
         onPointerLeave={endPress}
         className="absolute inset-0"
       >
-        <AuthedVideo
-          src={vibe.asset?.content_url}
-          autoPlay={false}
-          loop={ends === "replay"}
-          muted={muted}
-          playsInline
-          videoRef={video}
-          onTimeUpdate={() => {
-            const element = video.current;
-            if (!element) return;
-            // The rate is re-applied here as well as when it is chosen: a
-            // player that mounts after the first frame was not there when the
-            // choice was made.
-            const want = fast ? FAST : rate;
-            if (element.playbackRate !== want) element.playbackRate = want;
-            if (element.duration && Number.isFinite(element.duration)) {
-              const running = element.duration * 1000;
-              setTotal(running);
-              setAtMs(Math.min(running, element.currentTime * 1000));
-              // What the look reports: the length as the player gave it, and
-              // how far into the clip this look has actually been. The furthest
-              // point and not the current one — a clip replayed from the start
-              // was still watched to the end. The app's `_deepest`.
-              duration.current = Math.round(running);
-              look.current.deepest = Math.max(look.current.deepest, element.currentTime * 1000);
-            }
-          }}
-          onEnded={() => {
-            // Reaching the end is a fact about the look whether or not the
-            // walk goes on from it, and the studio counts it: a clip run to its
-            // last frame is not a clip swiped away early.
-            look.current.ended = true;
-            // A clip that runs out is either carried on or run again, and the
-            // walk's end has no next — but it does not stop there either: a
-            // player held on its last frame is indistinguishable from a player
-            // that has hung. See `_finished` in `vibes.dart`.
-            if (ends === "replay") return;
-            if (onNext()) return;
-            const element = video.current;
-            if (!element) return;
-            element.currentTime = 0;
-            void element.play().catch(() => undefined);
-          }}
-          className="h-full w-full object-contain"
-        />
+        {near ? (
+          <AuthedVideo
+            src={vibe.asset?.content_url}
+            autoPlay={false}
+            loop={ends === "replay"}
+            muted={muted}
+            playsInline
+            videoRef={video}
+            onTimeUpdate={() => {
+              const element = video.current;
+              if (!element) return;
+              // The rate is re-applied here as well as when it is chosen: a
+              // player that mounts after the first frame was not there when the
+              // choice was made.
+              const want = fast ? FAST : rate;
+              if (element.playbackRate !== want) element.playbackRate = want;
+              if (element.duration && Number.isFinite(element.duration)) {
+                const running = element.duration * 1000;
+                setTotal(running);
+                setAtMs(Math.min(running, element.currentTime * 1000));
+                // What the look reports: the length as the player gave it, and
+                // how far into the clip this look has actually been. The furthest
+                // point and not the current one — a clip replayed from the start
+                // was still watched to the end. The app's `_deepest`.
+                duration.current = Math.round(running);
+                look.current.deepest = Math.max(look.current.deepest, element.currentTime * 1000);
+              }
+            }}
+            onEnded={() => {
+              // Reaching the end is a fact about the look whether or not the
+              // walk goes on from it, and the studio counts it: a clip run to its
+              // last frame is not a clip swiped away early.
+              look.current.ended = true;
+              // A clip that runs out is either carried on or run again, and the
+              // walk's end has no next — but it does not stop there either: a
+              // player held on its last frame is indistinguishable from a player
+              // that has hung. See `_finished` in `vibes.dart`.
+              if (ends === "replay") return;
+              if (onNext()) return;
+              const element = video.current;
+              if (!element) return;
+              element.currentTime = 0;
+              void element.play().catch(() => undefined);
+            }}
+            className="h-full w-full object-contain"
+          />
+        ) : (
+          // Two screens away in the walk: the clip's own still, and nothing
+          // downloading behind it. The player is mounted when the thumb gets
+          // within one page, which is when it would be watched.
+          <AuthedImage
+            src={vibe.asset?.thumbnail_url ?? null}
+            alt=""
+            className="h-full w-full object-contain"
+            quiet
+          />
+        )}
       </div>
 
       {/* The one thing on this page that moves while a clip plays, and white on
@@ -1159,7 +1199,7 @@ function Slide({
         drop={vibe}
         open={shareOpen}
         onClose={() => setShareOpen(false)}
-        onShared={() => setShares((value) => value + 1)}
+        onShared={(sent) => setShares((value) => value + sent)}
       />
     </section>
   );

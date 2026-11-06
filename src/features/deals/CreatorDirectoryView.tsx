@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChevronRight, Search, Store, X } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Button, Spinner } from "@/components/Button";
-import { PageHeader } from "@/components/Page";
-import { EmptyState } from "@/components/States";
-import { count } from "@/lib/format";
+import { Avatar } from "@/components/ui/Avatar";
+import { Button, Spinner } from "@/components/ui/Button";
+import { PageHeader } from "@/components/layout/Page";
+import { EmptyState } from "@/components/ui/States";
+import { count } from "@/utils/format";
 import type { DealUser } from "@/types/api";
 import { InviteCompose } from "./InviteCompose";
 import { DealRetry, VerifiedTick } from "./parts";
-import { useCreators } from "./queries";
+import { useCreators } from "@/hooks/useDeals";
 
 /**
  * The eligible-creator directory: who a company may send a brief to.

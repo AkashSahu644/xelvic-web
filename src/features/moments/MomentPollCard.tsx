@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { CheckCircle2, Square } from "lucide-react";
-import { AuthedImage } from "@/components/Media";
-import { cn } from "@/lib/cn";
-import { errorMessage } from "@/lib/errors";
-import { useToast } from "@/providers/ToastProvider";
-import { api } from "@/lib/api";
+import { AuthedImage } from "@/components/media/Media";
+import { cn } from "@/utils/cn";
+import { errorMessage } from "@/utils/errors";
+import { useToast } from "@/hooks/useToast";
+import { momentsService } from "@/services/moments.service";
 import type { MomentPoll, MomentPollOption } from "@/types/api";
 
 /**
@@ -36,9 +36,7 @@ export function MomentPollCard({
     if (busy || readOnly) return;
     setBusy(true);
     try {
-      const answer = await api.post<{ poll: MomentPoll }>(`/moments/items/${itemId}/vote/`, {
-        option: option.id,
-      });
+      const answer = await momentsService.vote(itemId, option.id);
       if (answer.poll) onPoll?.(answer.poll);
     } catch (error) {
       toast({ title: "Your answer did not land", description: errorMessage(error), tone: "error" });

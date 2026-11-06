@@ -20,9 +20,9 @@ import {
   Users,
   Wallet,
 } from "lucide-react";
-import { Button } from "@/components/Button";
-import { ConfirmDialog, Modal } from "@/components/Modal";
-import { PrivacyConfirm } from "@/components/PrivacyConfirm";
+import { Button } from "@/components/ui/Button";
+import { ConfirmDialog, Modal } from "@/components/overlays/Modal";
+import { PrivacyConfirm } from "@/components/overlays/PrivacyConfirm";
 import { MarketPurse, MarketplaceView, type MarketTab } from "@/features/marketplace/MarketplaceView";
 import { LanguageView } from "@/features/settings/LanguageView";
 import { DevicesView } from "@/features/settings/DevicesView";
@@ -39,13 +39,13 @@ import {
   SettingsShell,
   SettingsSwitch,
 } from "@/features/settings/parts";
-import { api } from "@/lib/api";
-import { ApiError } from "@/lib/errors";
-import { useAuth } from "@/providers/AuthProvider";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import { useTheme, type ScreenBackdrop } from "@/providers/ThemeProvider";
-import { useToast } from "@/providers/ToastProvider";
-import type { Me } from "@/types/api";
+import { dealsService } from "@/services/deals.service";
+import { ApiError } from "@/utils/errors";
+import { useAuth } from "@/hooks/useAuth";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useTheme, type ScreenBackdrop } from "@/hooks/useTheme";
+import { useToast } from "@/hooks/useToast";
+import { authService } from "@/services/auth.service";
 
 type SettingsView =
   | "root"
@@ -238,7 +238,7 @@ export function SettingsPage() {
     const key = Object.keys(patch)[0];
     setPrivacyBusy(key);
     try {
-      const me = await api.patch<Me>("/auth/me/privacy/", patch);
+      const me = await authService.setPrivacy(patch);
       updateUser(me);
     } catch (error) {
       toast({
@@ -272,8 +272,8 @@ export function SettingsPage() {
     setProfessionalBusy(true);
     const next = !professionalOn;
     try {
-      await api.post("/deals/mode/", { company: next });
-      const me = await api.get<Me>("/auth/me/");
+      await dealsService.mode(next);
+      const me = await authService.me();
       updateUser(me);
     } catch (error) {
       toast({
@@ -335,7 +335,7 @@ export function SettingsPage() {
     setDeleteBusy(true);
     setDeleteWrong(false);
     try {
-      await api.post("/auth/deactivate/", { password: deletePassword });
+      await authService.deactivate(deletePassword);
       toast({ title: "Your account will be deleted in 30 days. Log in again to recover it.", tone: "success" });
       await logout();
       navigate("/", { replace: true });

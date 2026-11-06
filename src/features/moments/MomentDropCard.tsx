@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Pause, Play } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { AuthedImage } from "@/components/Media";
-import { VerifiedTick } from "@/components/Tick";
+import { Avatar } from "@/components/ui/Avatar";
+import { AuthedImage } from "@/components/media/Media";
+import { VerifiedTick } from "@/components/icons/Tick";
 import { SensitiveVeil } from "@/features/drops/SensitiveVeil";
-import { useMediaUrl } from "@/lib/media";
-import { useAuth } from "@/providers/AuthProvider";
+import { useMediaUrl } from "@/hooks/useMediaUrl";
+import { useAuth } from "@/hooks/useAuth";
 import type { Asset, DropPreview } from "@/types/api";
 
 /**
@@ -36,11 +36,6 @@ const SHORTEST = 0.7;
 /** The still a reference draws: a sound's own asset is the audio, not a picture. */
 function stillOf(drop: DropPreview): Asset | null {
   return drop.kind === "audio" ? drop.cover ?? null : drop.asset ?? null;
-}
-
-/** Where the post itself lives — a Vibe is served by its own family of routes. */
-export function previewPath(drop: DropPreview): string {
-  return drop.kind === "vibe" ? `/app/drops/vibes/${drop.id}` : `/app/drops/${drop.id}`;
 }
 
 export function MomentDropCard({

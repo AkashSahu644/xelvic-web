@@ -26,11 +26,11 @@ import {
   UserPlus,
   X,
 } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Spinner } from "@/components/Button";
-import { PageHeader } from "@/components/Page";
-import { EmptyState, ErrorState } from "@/components/States";
-import { AuthedImage } from "@/components/Media";
+import { Avatar } from "@/components/ui/Avatar";
+import { Spinner } from "@/components/ui/Button";
+import { PageHeader } from "@/components/layout/Page";
+import { EmptyState, ErrorState } from "@/components/ui/States";
+import { AuthedImage } from "@/components/media/Media";
 import { CommentsModal } from "@/features/drops/CommentsModal";
 import { inkOn } from "@/features/convo/skin";
 import { stamp } from "@/features/convo/model";
@@ -51,12 +51,15 @@ import {
   alertKeptBack,
   answerAlertKeep,
   markAlertsRead,
-  useAlerts,
-} from "@/features/alerts/useAlerts";
-import { api, apiPathFrom } from "@/lib/api";
-import { errorMessage } from "@/lib/errors";
-import { useTheme } from "@/providers/ThemeProvider";
-import { useToast } from "@/providers/ToastProvider";
+} from "@/store/alerts";
+import { useAlerts } from "@/hooks/useAlerts";
+import { apiPathFrom } from "@/config/urls";
+import { dropsService } from "@/services/drops.service";
+import { errorMessage } from "@/utils/errors";
+import { useTheme } from "@/hooks/useTheme";
+import { useToast } from "@/hooks/useToast";
+import { alertsService } from "@/services/alerts.service";
+import { socialService } from "@/services/social.service";
 import type { Alert, AlertsPageData, Drop } from "@/types/api";
 
 function KindGlyph({ alert, className }: { alert: Alert; className?: string }) {
@@ -143,15 +146,10 @@ export function AlertsPage() {
    * The table itself lives in `alertPath`, beside the model, because the strip
    * over the page and a background tab's system row ask it the same question —
    * and a second copy here would be a second chance to send one row to two
-   * places. What stays is the one answer the table cannot give: a Memory is a
-   * subject this build has no reader for, and saying so is better than a tap
-   * that opens nothing at all.
+   * places. A row with no answer there has nowhere to go, and a tap on it does
+   * nothing rather than pretending.
    */
   async function openAlert(alert: Alert) {
-    if (alert.target?.kind === "memory") {
-      say("Memories are not on the web yet.", "info");
-      return;
-    }
     const href = alertPath(alert);
     if (href) navigate(href);
   }
@@ -161,10 +159,7 @@ export function AlertsPage() {
     if (!who || busy) return;
     setBusy(alert.id);
     try {
-      const answer = await api.post<{ relation?: { following?: boolean } }>(
-        `/social/users/${who.id}/follow/`,
-        {},
-      );
+      const answer = await socialService.follow<{ relation?: { following?: boolean } }>(who.id);
       if (answer.relation?.following === true) {
         alertKeptBack(queryClient, alert.id);
         say(`Keeping ${who.name || who.username}.`);
@@ -204,7 +199,7 @@ export function AlertsPage() {
     if (!target || (target.kind !== "drop" && target.kind !== "vibe")) return;
     setBusy(alert.id);
     try {
-      const answer = await api.get<{ drop: Drop }>(`/drops/${target.id}/`);
+      const answer = await dropsService.detail<{ drop: Drop }>("drops", target.id);
       setCommentsFor(answer.drop);
     } catch (error) {
       say("That is not there any more.", "error", errorMessage(error));
@@ -218,7 +213,7 @@ export function AlertsPage() {
     if (!next || more) return;
     setMore(true);
     try {
-      const page = await api.get<AlertsPageData>(next);
+      const page = await alertsService.page(next);
       queryClient.setQueryData<AlertsPageData>(ALERTS_KEY, (current) =>
         current
           ? {
@@ -253,7 +248,10 @@ export function AlertsPage() {
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) void loadMoreRef.current();
       },
-      { rootMargin: "400px 0px" },
+      // A longer lead than the old 400px: the next page's first byte is the
+      // slowest part, and a notifications list that stops at a spinner is a
+      // list somebody stops reading.
+      { rootMargin: "1400px 0px" },
     );
     observer.observe(node);
     return () => observer.disconnect();

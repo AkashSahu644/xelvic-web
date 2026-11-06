@@ -1,8 +1,8 @@
 import { useParams } from "react-router-dom";
 import { ChevronRight, ImagePlus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
-import { Avatar } from "@/components/Avatar";
+import { audioService } from "@/services/audio.service";
+import { Avatar } from "@/components/ui/Avatar";
 
 interface ArtistTrack {
   id: string;
@@ -54,7 +54,7 @@ export function ArtistPage() {
 
   const { data: artistData, isLoading, isError, error } = useQuery<ArtistPageData>({
     queryKey: ["artist", artistSlug],
-    queryFn: () => api.get<ArtistPageData>(`/audio/tracks/?artist=${artistSlug}`),
+    queryFn: () => audioService.tracks<ArtistPageData>({ artist: artistSlug }),
     enabled: !!artistSlug,
     throwOnError: true,
   });

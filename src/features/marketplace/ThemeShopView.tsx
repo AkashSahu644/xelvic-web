@@ -25,18 +25,19 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { Check, Moon, RefreshCw, Sun, SunMoon, Zap } from "lucide-react";
-import { Backdrop } from "@/components/Backdrop";
-import { cn } from "@/lib/cn";
+import { Backdrop } from "@/components/layout/Backdrop";
+import { cn } from "@/utils/cn";
 import { inkOn } from "@/features/convo/skin";
-import { useToast } from "@/providers/ToastProvider";
-import { useTheme, type ThemeMode } from "@/providers/ThemeProvider";
+import { useToast } from "@/hooks/useToast";
+import { useTheme, type ThemeMode } from "@/hooks/useTheme";
 import { TONES, type ThemeDesign, type ThemePalette, type Tone } from "@/theme/catalog";
 import { mixedDesign, paletteOf, TONES_MOST, toneNamed, tonesOf } from "@/theme/shelf";
 import { canOpen, count, isOpen } from "@/theme/shop";
 import { characterFor, CharacterMark, markSizeFor, Pose, ThemeCover } from "./marks";
 import { figurePreviewPose, hasFigure, isLive, rowForKey } from "./model";
 import { themePrice } from "./parts";
-import { fetchAsFile, useCatalogue, useMarket, useMarketWallet } from "./queries";
+import { fetchAsFile } from "@/utils/fetchAsFile";
+import { useCatalogue, useMarket, useMarketWallet } from "@/hooks/useMarketplace";
 import type { CatalogueTheme, FigurePick } from "./types";
 
 /** The colours a design leads with, matched by name and never by index. */

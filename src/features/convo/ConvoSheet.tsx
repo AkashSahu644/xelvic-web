@@ -18,14 +18,15 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { ConfirmDialog, Modal } from "@/components/Modal";
-import { Spinner } from "@/components/Button";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { errorMessage } from "@/lib/errors";
-import { useToast } from "@/providers/ToastProvider";
-import type { ConvoCatalog, ThreadCard, ThreadDetail } from "@/types/api";
+import { Avatar } from "@/components/ui/Avatar";
+import { ConfirmDialog, Modal } from "@/components/overlays/Modal";
+import { Spinner } from "@/components/ui/Button";
+import { cn } from "@/utils/cn";
+import { errorMessage } from "@/utils/errors";
+import { useToast } from "@/hooks/useToast";
+import { chatService } from "@/services/chat.service";
+import { socialService } from "@/services/social.service";
+import type { ThreadCard, ThreadDetail } from "@/types/api";
 import {
   PIN_MAX,
   VANISH_DAYS,
@@ -190,14 +191,14 @@ export function ConvoSheet({
 
   const detail = useQuery({
     queryKey: ["thread", thread?.id],
-    queryFn: () => api.get<{ thread: ThreadDetail; catalog?: ConvoCatalog }>(`/chat/threads/${thread?.id}/`),
+    queryFn: () => chatService.thread(thread!.id),
     enabled: open && kind === "convo" && Boolean(thread?.id),
     staleTime: 8_000,
   });
 
   const threadList = useQuery({
     queryKey: ["threads"],
-    queryFn: () => api.get<{ threads: ThreadCard[]; unread: number }>("/chat/threads/"),
+    queryFn: () => chatService.threads(),
     enabled: open && pinnedCount == null,
     staleTime: 15_000,
   });
@@ -207,6 +208,9 @@ export function ConvoSheet({
   const row: ThreadDetail | null = thread
     ? ({ ...thread, ...(detail.data?.thread ?? {}), ...overrides } as ThreadDetail)
     : null;
+  // Every write below is about the thread this sheet was opened on, and the
+  // service methods take a plain id rather than the row.
+  const threadId = row?.id ?? "";
   const catalog = detail.data?.catalog;
 
   useEffect(() => {
@@ -238,7 +242,7 @@ export function ConvoSheet({
     if (busy) return false;
     setBusy(key);
     try {
-      const response = await api.patch<{ thread: ThreadDetail }>(`/chat/threads/${row?.id}/flags/`, patch);
+      const response = await chatService.flags(threadId, patch);
       setOverrides((current) => ({ ...current, ...response.thread }));
       changed();
       return true;
@@ -290,10 +294,7 @@ export function ConvoSheet({
     if (busy) return;
     setBusy("vanish");
     try {
-      const response = await api.patch<{ mode: string; days: number | null }>(
-        `/chat/threads/${row?.id}/vanish/`,
-        { mode, ...(length ? { days: length } : {}) },
-      );
+      const response = await chatService.vanish(threadId, mode, length);
       setOverrides((current) => ({
         ...current,
         vanish_mode: response.mode,
@@ -319,10 +320,7 @@ export function ConvoSheet({
     if (busy) return;
     setBusy(key);
     try {
-      const response = await api.patch<{ wallpaper: string; tint: string }>(
-        `/chat/threads/${row?.id}/skin/`,
-        patch,
-      );
+      const response = await chatService.skin(threadId, patch);
       setOverrides((current) => ({ ...current, ...response }));
       changed();
       toast({ title: key === "wallpaper" ? "Wallpaper changed." : "Convo theme changed.", tone: "success" });
@@ -337,10 +335,7 @@ export function ConvoSheet({
     if (busy) return;
     setBusy("wallpaper");
     try {
-      const response = await api.patch<{ wallpaper: string; tint: string }>(
-        `/chat/threads/${row?.id}/skin/`,
-        { wallpaper: "default" },
-      );
+      const response = await chatService.skin(threadId, { wallpaper: "default" });
       setOverrides((current) => {
         const { wallpaper: _, ...rest } = current;
         return { ...rest, ...response };
@@ -364,7 +359,7 @@ export function ConvoSheet({
     if (busy) return;
     setBusy("wallpaper");
     try {
-      await api.patch(`/chat/threads/${row?.id}/skin/`, { wallpaper: "default" });
+      await chatService.skin(threadId, { wallpaper: "default" });
       setOverrides((current) => {
         const { wallpaper: _, ...rest } = current;
         return { ...rest, wallpaper: "default" };
@@ -402,7 +397,7 @@ export function ConvoSheet({
     if (blocked) {
       setBusy("block");
       try {
-        await api.delete(`/social/users/${person.id}/block/`);
+        await socialService.unblock(person.id);
         setOverrides((current) => ({ ...current, gate: { mode: "open" } }));
         changed();
         toast({ title: `${first} is unblocked.`, tone: "success" });
@@ -421,7 +416,7 @@ export function ConvoSheet({
     if (!person) return;
     setBusy("block");
     try {
-      await api.post(`/social/users/${person.id}/block/`, {});
+      await socialService.block(person.id);
       setOverrides((current) => ({ ...current, gate: { mode: "blocked" } }));
       setConfirming(null);
       changed();
@@ -436,7 +431,7 @@ export function ConvoSheet({
   async function confirmClear() {
     setBusy("clear");
     try {
-      await api.post(`/chat/threads/${row?.id}/clear/`, {});
+      await chatService.clear(threadId);
       queryClient.removeQueries({ queryKey: ["messages", row?.id] });
       setConfirming(null);
       changed();
@@ -452,7 +447,7 @@ export function ConvoSheet({
   async function confirmTrash() {
     setBusy("trash");
     try {
-      await api.delete(`/chat/threads/${row?.id}/`);
+      await chatService.removeThread(threadId);
       queryClient.removeQueries({ queryKey: ["messages", row?.id] });
       setConfirming(null);
       onGone?.();
@@ -468,7 +463,7 @@ export function ConvoSheet({
   async function confirmLeave() {
     setBusy("leave");
     try {
-      await api.post(`/chat/threads/${row?.id}/leave/`, {});
+      await chatService.leave(threadId);
       queryClient.removeQueries({ queryKey: ["messages", row?.id] });
       setConfirming(null);
       onGone?.();

@@ -32,6 +32,15 @@ export default defineConfig(({ mode }) => {
           secure: true,
           followRedirects: true,
         },
+        // The CDN currently does not return CORS headers for avatar files.
+        // Keep local canvas rendering same-origin until the CDN CORS policy is
+        // updated; normal <img> elements continue to use the CDN directly.
+        "/__xelvic_cdn": {
+          target: "https://cdn.xelvic.com",
+          changeOrigin: true,
+          secure: true,
+          rewrite: (path) => path.replace(/^\/__xelvic_cdn/, ""),
+        },
         "/ws": {
           target: apiTarget.replace(/^http/, "ws"),
           changeOrigin: true,

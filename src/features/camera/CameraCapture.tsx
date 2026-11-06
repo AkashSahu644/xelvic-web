@@ -6,6 +6,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   ArrowUp,
@@ -26,14 +27,16 @@ import {
   ZapOff,
 } from "lucide-react";
 import { FaCheck } from "react-icons/fa6";
-import { Avatar } from "@/components/Avatar";
-import { Spinner } from "@/components/Button";
-import { Modal } from "@/components/Modal";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { errorMessage } from "@/lib/errors";
-import { kindOf, uploadAsset } from "@/lib/upload";
-import { useToast } from "@/providers/ToastProvider";
+import { Avatar } from "@/components/ui/Avatar";
+import { Spinner } from "@/components/ui/Button";
+import { Modal } from "@/components/overlays/Modal";
+import axios from "axios";
+import { cn } from "@/utils/cn";
+import { errorMessage } from "@/utils/errors";
+import { kindOf, uploadAsset } from "@/utils/upload";
+import { useToast } from "@/hooks/useToast";
+import { chatService } from "@/services/chat.service";
+import { momentsService } from "@/services/moments.service";
 import type { ThreadCard } from "@/types/api";
 import {
   clamp,
@@ -48,8 +51,9 @@ import {
   lookByKey,
   type Look,
 } from "./looks";
-import { PhotoEditor, fetchAudioFile } from "./PhotoEditor";
-import { drawScene, loadLayerImages } from "./editorCanvas";
+import { PhotoEditor } from "./PhotoEditor";
+import { fetchAudioFile } from "@/features/audio/soundBits";
+import { composeImage, drawScene, loadLayerImages } from "./editorCanvas";
 import {
   aspectValue,
   defaultEditorDoc,
@@ -168,6 +172,29 @@ function compactPlace(
   );
 }
 
+/**
+ * A read from somebody else's server — OpenStreetMap, BigDataCloud.
+ *
+ * These are not Xelvic roads, so they must not go through the app's client:
+ * that one prefixes the API base and attaches the account's bearer token, and
+ * neither belongs to a third party. A bare `axios` call sends no credentials at
+ * all. Cancellation is translated back into the `AbortError` the callers here
+ * already recognise, because axios reports a cancelled request under its own
+ * name.
+ */
+async function getJson<T>(
+  url: string,
+  options: { headers?: Record<string, string>; signal?: AbortSignal } = {},
+): Promise<T> {
+  try {
+    const response = await axios.get<T>(url, { ...options, timeout: 15_000 });
+    return response.data;
+  } catch (error) {
+    if (axios.isCancel(error)) throw new DOMException("Aborted", "AbortError");
+    throw error;
+  }
+}
+
 async function reversePlace(
   latitude: number,
   longitude: number,
@@ -181,18 +208,13 @@ async function reversePlace(
     addressdetails: "1",
   });
   try {
-    const response = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?${query}`,
-      {
-        headers: { Accept: "application/json" },
-        signal,
-      },
-    );
-    if (!response.ok) throw new Error("Location lookup failed.");
-    const row = (await response.json()) as {
+    const row = await getJson<{
       display_name?: string;
       address?: Record<string, string>;
-    };
+    }>(`https://nominatim.openstreetmap.org/reverse?${query}`, {
+      headers: { Accept: "application/json" },
+      signal,
+    });
     const fallback =
       row.display_name?.split(",").slice(0, 2).join(", ") ||
       `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
@@ -209,20 +231,15 @@ async function reversePlace(
       longitude: String(longitude),
       localityLanguage: "en",
     });
-    const response = await fetch(
-      `https://api.bigdatacloud.net/data/reverse-geocode-client?${fallbackQuery}`,
-      {
-        headers: { Accept: "application/json" },
-        signal,
-      },
-    );
-    if (!response.ok) throw new Error("Location lookup failed.", { cause });
-    const row = (await response.json()) as {
+    const row = await getJson<{
       locality?: string;
       city?: string;
       principalSubdivision?: string;
       countryName?: string;
-    };
+    }>(`https://api.bigdatacloud.net/data/reverse-geocode-client?${fallbackQuery}`, {
+      headers: { Accept: "application/json" },
+      signal,
+    });
     const label =
       [row.locality || row.city, row.principalSubdivision]
         .filter(Boolean)
@@ -255,20 +272,17 @@ async function searchPlaces(
     limit: "6",
     addressdetails: "1",
   });
-  const response = await fetch(
-    `https://nominatim.openstreetmap.org/search?${params}`,
-    {
-      headers: { Accept: "application/json" },
-      signal,
-    },
-  );
-  if (!response.ok) throw new Error("Place search failed.");
-  const rows = (await response.json()) as Array<{
-    display_name: string;
-    lat: string;
-    lon: string;
-    address?: Record<string, string>;
-  }>;
+  const rows = await getJson<
+    Array<{
+      display_name: string;
+      lat: string;
+      lon: string;
+      address?: Record<string, string>;
+    }>
+  >(`https://nominatim.openstreetmap.org/search?${params}`, {
+    headers: { Accept: "application/json" },
+    signal,
+  });
   return rows.map((row) => ({
     label: compactPlace(
       row.address,
@@ -377,6 +391,24 @@ function canvasFilterSupported() {
   return canvasFilterSupport;
 }
 
+/**
+ * The shot's own width over height, for a document that named no frame.
+ *
+ * A picture that will not decode is not a reason to fail here: the composer
+ * returns the file it was given for exactly that case, so the aspect only has
+ * to be something a canvas accepts, and a portrait frame is the camera's own.
+ */
+async function naturalAspect(url: string): Promise<number> {
+  const image = new Image();
+  image.src = url;
+  try {
+    await image.decode();
+  } catch {
+    return 4 / 5;
+  }
+  return image.naturalWidth / Math.max(1, image.naturalHeight);
+}
+
 async function mediaSize(
   file: File,
   kind: "image" | "video",
@@ -457,6 +489,7 @@ export function CameraCapture({
   const abortRef = useRef<AbortController | null>(null);
   const aliveRef = useRef(true);
   const capturingRef = useRef(false);
+  const recordStartingRef = useRef(false);
   const uploadingRef = useRef(false);
   const lookRef = useRef<Look>(DEFAULT_LOOK);
   const zoomRef = useRef(1);
@@ -530,6 +563,7 @@ export function CameraCapture({
     new Set(),
   );
   const [postAction, setPostAction] = useState<"moment" | "send" | null>(null);
+  const queryClient = useQueryClient();
 
   const canRecord = typeof MediaRecorder !== "undefined";
   const look = lookByKey(lookKey);
@@ -705,21 +739,16 @@ export function CameraCapture({
         height: { ideal: 1280 },
       };
       try {
+        // Photos do not need the microphone. Asking for audio here makes the
+        // browser negotiate two devices before it can paint the first frame.
+        // Audio is requested lazily only when the user switches to video.
         stream = await navigator.mediaDevices.getUserMedia({
           video,
-          audio: true,
+          audio: false,
         });
       } catch (cause) {
-        if (cancelled) return;
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video,
-            audio: false,
-          });
-        } catch (fallback) {
-          if (!cancelled) setCameraError(cameraProblem(fallback ?? cause));
-          return;
-        }
+        if (!cancelled) setCameraError(cameraProblem(cause));
+        return;
       }
       if (cancelled) {
         stream.getTracks().forEach((track) => track.stop());
@@ -1009,8 +1038,8 @@ export function CameraCapture({
     else setRecording(false);
   }
 
-  function startRecording() {
-    const stream = streamRef.current;
+  async function startRecording() {
+    let stream = streamRef.current;
     const element = videoRef.current;
     if (
       !stream ||
@@ -1023,6 +1052,25 @@ export function CameraCapture({
     ) {
       return;
     }
+    if (recordStartingRef.current) return;
+    recordStartingRef.current = true;
+
+    // Keep the photo path fast and ask for microphone access only when a
+    // video is actually requested. Add the track to the live stream so the
+    // existing canvas recorder keeps its audio behavior unchanged.
+    if (!stream.getAudioTracks().length) {
+      try {
+        const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioStream.getAudioTracks().forEach((track) => stream?.addTrack(track));
+        stream = streamRef.current;
+      } catch (cause) {
+        toast({ title: cameraProblem(cause), tone: "error" });
+        recordStartingRef.current = false;
+        return;
+      }
+    }
+    recordStartingRef.current = false;
+    if (!stream) return;
     if (!canRecord) {
       toast({
         title: "This browser cannot record a video here.",
@@ -1345,18 +1393,17 @@ export function CameraCapture({
 
       let fallback: PlaceChoice | null = null;
       if (latitude === undefined || longitude === undefined) {
-        const response = await fetch("https://ipapi.co/json/", {
-          headers: { Accept: "application/json" },
-        });
-        if (!response.ok)
-          throw new Error("Location permission was not available.");
-        const row = (await response.json()) as {
+        const row = await getJson<{
           city?: string;
           region?: string;
           country_name?: string;
           latitude?: number;
           longitude?: number;
-        };
+        }>("https://ipapi.co/json/", {
+          headers: { Accept: "application/json" },
+        }).catch(() => {
+          throw new Error("Location permission was not available.");
+        });
         latitude = Number(row.latitude);
         longitude = Number(row.longitude);
         fallback = {
@@ -1845,6 +1892,18 @@ export function CameraCapture({
     mode: "edit" | "moment" | null = editorMode,
   ) {
     if (!shot) return null;
+    const hasCaptureOverlays = Boolean(timeSticker || place || text || prompt);
+    const defaultDoc = defaultEditorDoc(frameForMode("edit", shot.aspect));
+    const isUnchangedEdit =
+      doc &&
+      mode !== "moment" &&
+      JSON.stringify(doc) === JSON.stringify(defaultDoc);
+    // The camera capture is already cropped, filtered and encoded. Avoid
+    // decoding and encoding the same image again when the user only opened
+    // the editor and pressed Send without changing anything.
+    if (shot.kind === "image" && !hasCaptureOverlays && (isUnchangedEdit || !doc)) {
+      return shot.file;
+    }
     if (
       doc &&
       mode !== "moment" &&
@@ -1856,48 +1915,20 @@ export function CameraCapture({
       if (!doc) return shot.file;
       return bakeVideo(doc, mode, mode !== "moment" || !doc.audio);
     }
-    const image = new Image();
-    image.src = shot.url;
-    try {
-      await image.decode();
-    } catch {
-      return shot.file;
-    }
-
     const working = doc ?? defaultEditorDoc();
     const stageAspect = doc
       ? mode === "moment"
         ? aspectValue(shot.aspect)
         : aspectValue(frameAspect(working.frame))
-      : image.naturalWidth / Math.max(1, image.naturalHeight);
-    const longEdge = 1440;
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(
-      1,
-      Math.round(stageAspect >= 1 ? longEdge : longEdge * stageAspect),
-    );
-    canvas.height = Math.max(
-      1,
-      Math.round(stageAspect >= 1 ? longEdge / stageAspect : longEdge),
-    );
-    const context = canvas.getContext("2d");
-    if (!context) return shot.file;
-
-    const layerImages = await loadLayerImages(working.layers);
-    drawScene(context, {
-      source: image,
-      sourceWidth: image.naturalWidth,
-      sourceHeight: image.naturalHeight,
+      : await naturalAspect(shot.url);
+    // The scene itself is drawn by the shared composer, which is the same code
+    // the viewer's carried picture goes through — see `composeImage`.
+    const blob = await composeImage({
+      url: shot.url,
       doc: working,
-      width: canvas.width,
-      height: canvas.height,
-      layerImages,
+      aspect: stageAspect,
       afterSource: paintCaptureOverlays,
     });
-
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", 0.92),
-    );
     return blob
       ? new File([blob], shot.file.name.replace(/\.[^.]+$/, "-xelvic.jpg"), {
           type: "image/jpeg",
@@ -2010,7 +2041,7 @@ export function CameraCapture({
         item.sound_start_ms = doc?.audioStartMs ?? 0;
       }
       if (shot.kind === "video") item.muted = Boolean(doc?.audio) || muted;
-      await api.post("/moments/", { items: [item] });
+      await momentsService.post({ items: [item] });
       if (!aliveRef.current) return;
       toast({ title: "Your moment is up", tone: "success" });
       onPosted?.();
@@ -2041,12 +2072,17 @@ export function CameraCapture({
   async function openSendSheet() {
     if (rendering) return;
     setSendOpen(true);
-    setThreadsLoading(true);
     setFailure(null);
+    const cached = queryClient.getQueryData<{ threads?: ThreadCard[] }>(["threads"]);
+    const cachedThreads = cached?.threads ?? [];
+    if (cachedThreads.length) {
+      setThreads(cachedThreads);
+      setThreadsLoading(false);
+    } else {
+      setThreadsLoading(true);
+    }
     try {
-      const response = await api.get<{ threads: ThreadCard[] }>(
-        "/chat/threads/",
-      );
+      const response = await chatService.threads();
       if (aliveRef.current) setThreads(response.threads ?? []);
     } catch (cause) {
       if (aliveRef.current) setFailure(errorMessage(cause));
@@ -2084,11 +2120,13 @@ export function CameraCapture({
       const asset = await uploadAsset(file, {
         kind: shot.kind,
         signal: controller.signal,
+        skipThumb: true,
+        skipMetadata: true,
       });
       const threadIds = Array.from(selectedThreads);
       const results = await Promise.allSettled(
         threadIds.map((threadId) =>
-          api.post(`/chat/threads/${threadId}/messages/send/`, {
+          chatService.send(threadId, {
             // A Spark is not a message kind. It is an ordinary photo or clip
             // whose payload carries `view_once`, which is the whole of what
             // makes the server hand its bytes to one look and then purge them.
@@ -3192,98 +3230,147 @@ export function CameraCapture({
 
         {sendOpen ? (
           <div
-            className="absolute inset-0 z-[80] flex items-end bg-black/50"
+            className="absolute inset-0 z-[80] flex items-end bg-black/50 backdrop-blur-[2px]"
             onClick={() => setSendOpen(false)}
           >
             <section
-              className="flex max-h-[62%] min-h-[42%] w-full flex-col rounded-t-[28px] bg-card pb-[max(18px,env(safe-area-inset-bottom))] text-ink shadow-2xl"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="send-spark-title"
+              className="flex max-h-[70%] min-h-[46%] w-full animate-fade-up flex-col overflow-hidden rounded-t-[28px] bg-card text-ink shadow-2xl"
               onClick={(event) => event.stopPropagation()}
             >
-              <div className="mx-auto mt-2 h-1.5 w-12 rounded-full bg-[color-mix(in_srgb,var(--ink)_18%,transparent)]" />
-              <div className="flex items-center justify-between px-5 pb-2 pt-2">
-                <h2 className="text-[18px] font-extrabold">Send spark</h2>
+              <div className="mx-auto mt-2 h-1.5 w-12 shrink-0 rounded-full bg-[color-mix(in_srgb,var(--ink)_18%,transparent)]" />
+              <div className="flex shrink-0 items-start justify-between gap-3 px-5 pb-3 pt-2">
+                <div className="min-w-0">
+                  <h2
+                    id="send-spark-title"
+                    className="text-[19px] font-black leading-tight tracking-tight"
+                  >
+                    Send spark
+                  </h2>
+                  <p className="mt-0.5 text-[11px] font-semibold text-dim">
+                    Once opened, it disappears.
+                  </p>
+                </div>
                 <button
                   type="button"
                   onClick={() => setSendOpen(false)}
-                  className="flex size-9 items-center justify-center rounded-full bg-surface-2 hover:bg-[color-mix(in_srgb,var(--ink)_12%,var(--card))]"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-surface-2 text-dim transition hover:text-ink active:scale-95"
                   aria-label="Close"
                 >
                   <X className="size-5" />
                 </button>
               </div>
-              <div className="mx-5 mb-3 flex h-11 items-center gap-2.5 rounded-full bg-surface-2 px-4 focus-within:ring-1 focus-within:ring-accent">
-                <Search className="size-4 text-dim" />
+              <div className="mx-5 mb-3 flex h-11 shrink-0 items-center gap-2.5 rounded-full border border-line bg-surface-2 px-3.5 transition focus-within:border-accent/40 focus-within:ring-1 focus-within:ring-accent/40">
+                <Search className="size-4 shrink-0 text-dim" aria-hidden />
                 <input
                   value={threadSearch}
                   onChange={(event) => setThreadSearch(event.target.value)}
                   placeholder="Search people"
-                  className="min-w-0 flex-1 bg-transparent text-[13px] font-semibold outline-none"
+                  aria-label="Search people"
+                  className="min-w-0 flex-1 bg-transparent text-[13px] font-semibold text-ink outline-none placeholder:text-dim"
                   autoFocus
                 />
+                {threadSearch ? (
+                  <button
+                    type="button"
+                    onClick={() => setThreadSearch("")}
+                    className="flex size-7 shrink-0 items-center justify-center rounded-full text-dim transition hover:bg-surface-3 hover:text-ink active:scale-95"
+                    aria-label="Clear search"
+                  >
+                    <X className="size-4" />
+                  </button>
+                ) : null}
               </div>
               {selectedThreads.size ? (
-                <button
-                  type="button"
-                  onClick={() => void sendSpark()}
-                  disabled={uploading}
-                  className="mx-5 mb-4 h-11 rounded-full bg-accent text-[13px] font-extrabold text-on-accent disabled:opacity-35"
-                >
-                  Send to {selectedThreads.size}{" "}
-                  {selectedThreads.size === 1 ? "person" : "people"}
-                </button>
+                <div className="mx-5 mb-3 flex shrink-0 items-center justify-between">
+                  <span className="flex items-center gap-1.5 rounded-full bg-[var(--accent-soft)] px-2.5 py-1 text-[10px] font-extrabold text-accent">
+                    <FaCheck className="size-2.5" />
+                    {selectedThreads.size} selected
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedThreads(new Set())}
+                    className="text-[10px] font-extrabold text-dim transition hover:text-ink"
+                  >
+                    Clear
+                  </button>
+                </div>
               ) : null}
-              <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-1">
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-2">
+                {failure ? (
+                  <p className="mb-3 rounded-[12px] bg-[color-mix(in_srgb,var(--bad)_12%,transparent)] px-3 py-2 text-[11px] font-semibold leading-5 text-bad">
+                    {failure}
+                  </p>
+                ) : null}
                 {threadsLoading ? (
-                  <div className="flex justify-center py-10">
+                  <div className="flex justify-center py-12">
                     <Spinner className="size-7 text-accent" />
                   </div>
                 ) : null}
                 {!threadsLoading && filteredThreads.length === 0 ? (
-                  <p className="py-10 text-center text-[13px] font-bold text-dim">
-                    No convos yet.
-                  </p>
+                  <div className="flex flex-col items-center gap-3 py-12 text-center">
+                    <span className="flex size-11 items-center justify-center rounded-full bg-surface-2 text-dim">
+                      <Search className="size-5" aria-hidden />
+                    </span>
+                    <p className="text-[12px] font-bold text-dim">
+                      No convos yet.
+                    </p>
+                  </div>
                 ) : null}
                 {!threadsLoading && filteredThreads.length ? (
                   <>
-                    <p className="mb-3 text-[11px] font-extrabold text-dim">
-                      Recents
-                    </p>
-                    <div className="flex gap-3 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    <div className="mb-2 flex items-center justify-between">
+                      <p className="text-[11px] font-extrabold text-dim">
+                        Recents
+                      </p>
+                      <span className="text-[10px] font-bold text-dim">
+                        {filteredThreads.length}
+                      </span>
+                    </div>
+                    <div className="hide-scrollbar -mx-1 flex gap-3 overflow-x-auto px-1 py-1">
                       {filteredThreads.map((thread) => {
                         const title =
                           thread.title ||
                           thread.other?.name ||
                           thread.other?.username ||
                           "Convo";
-                        const selected = selectedThreads.has(thread.id);
+                        const picked = selectedThreads.has(thread.id);
                         return (
                           <button
                             key={thread.id}
                             type="button"
                             onClick={() => toggleThread(thread.id)}
-                            className="flex w-[72px] shrink-0 flex-col items-center gap-2"
+                            aria-pressed={picked}
+                            className="flex w-[72px] shrink-0 touch-manipulation flex-col items-center gap-2"
                           >
                             <span
                               className={cn(
-                                "relative rounded-full p-[2px] transition",
-                                selected
-                                  ? "ring-2 ring-accent"
-                                  : "ring-2 ring-transparent",
+                                "relative flex size-16 shrink-0 items-center justify-center rounded-full border-2 transition",
+                                picked
+                                  ? "border-accent bg-[var(--accent-soft)] shadow-sm"
+                                  : "border-transparent hover:bg-surface-2",
                               )}
                             >
                               <Avatar
                                 user={thread.other}
                                 name={title}
                                 src={thread.avatar}
-                                size={62}
+                                size={54}
                               />
-                              {selected ? (
-                                <span className="absolute -bottom-0.5 -right-0.5 flex size-5 items-center justify-center rounded-full border-2 border-card bg-accent text-on-accent">
+                              {picked ? (
+                                <span className="absolute bottom-1 -right-0.5 flex size-5 items-center justify-center rounded-full border-2 border-card bg-accent text-on-accent">
                                   <FaCheck className="size-2.5" />
                                 </span>
                               ) : null}
                             </span>
-                            <span className="w-full truncate text-center text-[11px] font-semibold">
+                            <span
+                              className={cn(
+                                "w-full truncate text-center text-[11px] font-semibold",
+                                picked ? "text-ink" : "text-dim",
+                              )}
+                            >
                               {title}
                             </span>
                           </button>
@@ -3292,6 +3379,26 @@ export function CameraCapture({
                     </div>
                   </>
                 ) : null}
+              </div>
+              <div className="shrink-0 border-t border-line px-5 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
+                <button
+                  type="button"
+                  onClick={() => void sendSpark()}
+                  disabled={!selectedThreads.size || uploading}
+                  className={cn(
+                    "flex h-11 w-full items-center justify-center gap-2 rounded-full text-[13px] font-extrabold transition active:scale-[0.99] disabled:opacity-40",
+                    selectedThreads.size
+                      ? "bg-accent text-on-accent shadow-sm"
+                      : "bg-surface-2 text-dim",
+                  )}
+                >
+                  <Sparkles className="size-4" />
+                  {selectedThreads.size
+                    ? `Send to ${selectedThreads.size} ${
+                        selectedThreads.size === 1 ? "person" : "people"
+                      }`
+                    : "Select someone to send"}
+                </button>
               </div>
             </section>
           </div>

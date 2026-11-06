@@ -1,13 +1,13 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
+import { PreferencesContext } from "@/context/preferences";
+import { STORAGE_KEYS } from "@/constants/storage";
 
 export type AppLanguage = "system" | "en" | "hi" | "ar";
 export type MessageSound = "silent" | "note" | "ping" | "pop" | "soft";
@@ -21,7 +21,7 @@ export interface Preferences {
   logo: string;
 }
 
-interface PreferencesContextValue extends Preferences {
+export interface PreferencesContextValue extends Preferences {
   setLanguage: (value: AppLanguage) => void;
   setNotifications: (value: boolean) => void;
   setMessageSound: (value: MessageSound) => void;
@@ -32,7 +32,7 @@ interface PreferencesContextValue extends Preferences {
   t: (key: string) => string;
 }
 
-const STORAGE_KEY = "xelvic.preferences";
+const STORAGE_KEY = STORAGE_KEYS.preferences;
 
 const defaults: Preferences = {
   language: "system",
@@ -261,8 +261,6 @@ function playPattern(kind: MessageSound | Ringtone) {
   window.setTimeout(() => void context.close().catch(() => undefined), 1800);
 }
 
-const PreferencesContext = createContext<PreferencesContextValue | null>(null);
-
 export function PreferencesProvider({ children }: { children: ReactNode }) {
   const [preferences, setPreferences] = useState<Preferences>(readPreferences);
   const preferencesRef = useRef(preferences);
@@ -319,12 +317,3 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
 }
 
-export function usePreferences() {
-  const context = useContext(PreferencesContext);
-  if (!context) throw new Error("usePreferences must be used inside PreferencesProvider");
-  return context;
-}
-
-export function useOptionalPreferences() {
-  return useContext(PreferencesContext);
-}

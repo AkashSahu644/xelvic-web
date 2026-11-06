@@ -2,13 +2,13 @@ import { useEffect, useMemo, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { CloudOff, Hash } from "lucide-react";
-import { Blank } from "@/components/Blank";
-import { PageHeader } from "@/components/Page";
+import { Blank } from "@/components/ui/Blank";
+import { PageHeader } from "@/components/layout/Page";
 import { Square } from "@/features/profile/ProfileShelf";
-import { api, apiPathFrom } from "@/lib/api";
-import { errorMessage } from "@/lib/errors";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import type { Drop } from "@/types/api";
+import { apiPathFrom } from "@/config/urls";
+import { dropsService } from "@/services/drops.service";
+import { errorMessage } from "@/utils/errors";
+import { usePreferences } from "@/hooks/usePreferences";
 
 /**
  * Everything filed under one word, as a grid.
@@ -42,7 +42,7 @@ export function TagPage() {
   const feed = useInfiniteQuery({
     queryKey: ["tag", word.toLowerCase()],
     queryFn: ({ pageParam }) =>
-      api.get<{ tag: string; count: number; results: Drop[]; next: string | null }>(String(pageParam)),
+      dropsService.tags(word, String(pageParam)),
     initialPageParam: `/tags/${encodeURIComponent(word)}/`,
     getNextPageParam: (last) => apiPathFrom(last.next),
     enabled: Boolean(word),
@@ -76,7 +76,9 @@ export function TagPage() {
         if (!entries.some((entry) => entry.isIntersecting)) return;
         void fetchNextPage();
       },
-      { rootMargin: "400px" },
+      // Farther out than the phone's 400 points — see `DropsPage`: the request's
+      // latency is paid before the reader reaches the foot, not after.
+      { rootMargin: "1400px 0px" },
     );
     watcher.observe(node);
     return () => watcher.disconnect();

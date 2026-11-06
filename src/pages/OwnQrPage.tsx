@@ -2,10 +2,10 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { QRCodeSVG } from "qrcode.react";
 import { RefreshCw, Copy, Check, AlertCircle, Clock } from "lucide-react";
-import { api } from "@/lib/api";
-import { relativeTime } from "@/lib/format";
-import { useToast } from "@/providers/ToastProvider";
-import { Button } from "@/components/Button";
+import { relativeTime } from "@/utils/format";
+import { useToast } from "@/hooks/useToast";
+import { authService } from "@/services/auth.service";
+import { Button } from "@/components/ui/Button";
 
 interface QRStart {
   session: string;
@@ -25,12 +25,12 @@ export function OwnQrPage() {
 
   const { data: qr, isLoading, isError, error, refetch } = useQuery<QRStart>({
     queryKey: ["own-qr"],
-    queryFn: () => api.post<QRStart>("/auth/qr/start/", {}),
+    queryFn: () => authService.qrStart(),
     staleTime: 30000,
   });
 
   const regenerate = useMutation({
-    mutationFn: () => api.post<QRStart>("/auth/qr/start/", {}),
+    mutationFn: () => authService.qrStart(),
     onSuccess: (data) => {
       queryClient.setQueryData(["own-qr"], data);
       toast({ title: "New QR code generated", tone: "success" });

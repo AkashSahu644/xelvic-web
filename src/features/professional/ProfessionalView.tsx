@@ -14,16 +14,15 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Spinner } from "@/components/Button";
-import { Modal } from "@/components/Modal";
-import { api } from "@/lib/api";
-import { ApiError } from "@/lib/errors";
-import { cn } from "@/lib/cn";
-import { useAuth } from "@/providers/AuthProvider";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import { useToast } from "@/providers/ToastProvider";
-import type { Me } from "@/types/api";
+import { Avatar } from "@/components/ui/Avatar";
+import { Spinner } from "@/components/ui/Button";
+import { Modal } from "@/components/overlays/Modal";
+import { ApiError } from "@/utils/errors";
+import { cn } from "@/utils/cn";
+import { useAuth } from "@/hooks/useAuth";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useToast } from "@/hooks/useToast";
+import { authService } from "@/services/auth.service";
 import {
   LINK_SHORTCUTS,
   MAX_LINKS,
@@ -156,7 +155,7 @@ export function ProfessionalView({ onBack }: { onBack: () => void }) {
       // The answer is the fresh "me" payload, so nothing is re-read to find out
       // what was stored: the account held by the app becomes the server's own
       // answer, exactly as `Session.it.applyUser(user)` does on the phone.
-      const me = await api.patch<Me>("/auth/me/professional/", {
+      const me = await authService.setProfessional({
         category: trade.trim(),
         address: address.trim(),
         contact_email: mail,

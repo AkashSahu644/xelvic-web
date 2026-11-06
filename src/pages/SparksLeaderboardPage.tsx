@@ -2,14 +2,14 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Bolt, Flame, Share2, Trophy } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Blank } from "@/components/Blank";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { count } from "@/lib/format";
-import { errorMessage } from "@/lib/errors";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import { useToast } from "@/providers/ToastProvider";
+import { Avatar } from "@/components/ui/Avatar";
+import { Blank } from "@/components/ui/Blank";
+import { sparksService } from "@/services/sparks.service";
+import { cn } from "@/utils/cn";
+import { count } from "@/utils/format";
+import { errorMessage } from "@/utils/errors";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useToast } from "@/hooks/useToast";
 import type { UserCard } from "@/types/api";
 
 /**
@@ -45,28 +45,6 @@ interface LeaderPerson {
 }
 
 /** A year's row, and either board's pinned self. */
-interface LeaderRank {
-  rank?: number | null;
-  days?: number | null;
-  award?: string | null;
-  user?: UserCard | null;
-  me?: boolean;
-}
-
-interface LeaderboardBook {
-  monthly: {
-    month?: string;
-    people: LeaderPerson[];
-    me?: LeaderRank | null;
-    previous?: { month?: string; winner?: LeaderPerson | null } | null;
-  };
-  yearly: {
-    year?: number | null;
-    people: LeaderRank[];
-    me?: LeaderRank | null;
-  };
-}
-
 /** The months, spelled out, for a heading and for one sentence about last month's winner. */
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -112,7 +90,7 @@ export function SparksLeaderboardPage() {
 
   const board = useQuery({
     queryKey: ["sparks-leaderboard"],
-    queryFn: () => api.get<LeaderboardBook>("/sparks/leaderboard/"),
+    queryFn: () => sparksService.leaderboard(),
   });
 
   const monthly = board.data?.monthly;

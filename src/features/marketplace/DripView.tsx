@@ -20,9 +20,9 @@
 
 import { useEffect, useState } from "react";
 import { AlertTriangle, ArrowLeft, CheckCircle2, CloudOff } from "lucide-react";
-import { cn } from "@/lib/cn";
-import { Spinner } from "@/components/Button";
-import { useToast } from "@/providers/ToastProvider";
+import { cn } from "@/utils/cn";
+import { Spinner } from "@/components/ui/Button";
+import { useToast } from "@/hooks/useToast";
 import {
   BUNDLED_POSES,
   FIGURE_POSES,
@@ -31,7 +31,7 @@ import {
 } from "./model";
 import { Pose } from "./marks";
 import { PriceChip, SparkPurse } from "./parts";
-import { useDripShelf, useMarket, useMarketWallet } from "./queries";
+import { useDripShelf, useMarket, useMarketWallet } from "@/hooks/useMarketplace";
 import type { DripCharacter } from "./types";
 
 /** One form of a count, in the form the words ask for. See `drip.dart`'s `_count`. */

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Flag } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Modal } from "@/components/Modal";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { errorMessage } from "@/lib/errors";
-import { useToast } from "@/providers/ToastProvider";
+import { Avatar } from "@/components/ui/Avatar";
+import { Modal } from "@/components/overlays/Modal";
+import { cn } from "@/utils/cn";
+import { errorMessage } from "@/utils/errors";
+import { useToast } from "@/hooks/useToast";
+import { socialService } from "@/services/social.service";
 
 /** The kinds of thing a complaint can be about — `social.models.Report.Target`. */
 export type ReportKind =
@@ -77,7 +77,7 @@ export function ReportSheet({
 
   const answer = useQuery({
     queryKey: ["report-reasons"],
-    queryFn: () => api.get<Answers>("/social/report/"),
+    queryFn: () => socialService.reportReasons<Answers>(),
     enabled: open,
     staleTime: 5 * 60_000,
   });
@@ -99,7 +99,7 @@ export function ReportSheet({
     if (busy || !reason) return;
     setBusy(true);
     try {
-      const result = await api.post<{ ok: boolean; new: boolean }>("/social/report/", {
+      const result = await socialService.report({
         target_kind: kind,
         target_id: id,
         reason,

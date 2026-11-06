@@ -1,13 +1,17 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
-import { ApiError } from "@/lib/errors";
-import { session } from "@/lib/session";
+import { AuthContext } from "@/context/auth";
+import { clearMe, readMe, writeMe } from "@/store/me";
+import { clearPersistedQueries } from "@/store/queryCache";
+import { clearMediaCache } from "@/utils/mediaCache";
+import { session } from "@/store/session";
+import { ApiError } from "@/utils/errors";
+import { authService } from "@/services/auth.service";
 import type { AuthTokens, Me } from "@/types/api";
 
 export type AuthStatus = "loading" | "authenticated" | "anonymous" | "error";
 
-interface AuthContextValue {
+export interface AuthContextValue {
   status: AuthStatus;
   user: Me | null;
   error: string | null;
@@ -18,12 +22,29 @@ interface AuthContextValue {
   updateUser: (patch: Partial<Me> | Me) => void;
 }
 
-const AuthContext = createContext<AuthContextValue | null>(null);
-
+/**
+ * The account, and the one question asked before anything else is drawn.
+ *
+ * **A remembered account is drawn on the first frame.** `GET /auth/me/` is the
+ * slowest thing between a reload and the app, and the answer it gives almost
+ * never differs from the last one: the profile is in `store/me.ts`, written on
+ * every read and every edit, and a session with a remembered account starts as
+ * `authenticated` and revalidates behind the page. Only a session that has a
+ * token but no remembered account waits on the splash.
+ *
+ * That ordering is what the app does too — `Session.restore` reads the box
+ * first and asks the server afterwards — and it is the difference between a
+ * reload showing a spinner for a network round trip and showing the feed.
+ */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
-  const [status, setStatus] = useState<AuthStatus>(() => (session.access() ? "loading" : "anonymous"));
-  const [user, setUser] = useState<Me | null>(null);
+  // Read synchronously, once: the value decides the very first paint.
+  const remembered = useRef(session.access() ? readMe() : null).current;
+  const [status, setStatus] = useState<AuthStatus>(() => {
+    if (!session.access()) return "anonymous";
+    return remembered ? "authenticated" : "loading";
+  });
+  const [user, setUser] = useState<Me | null>(remembered);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
 
@@ -35,40 +56,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const fetchMe = useCallback(async () => {
-    const me = await api.get<Me>("/auth/me/");
+    const me = await authService.me();
     if (mounted.current) {
       setUser(me);
       setStatus("authenticated");
       setError(null);
     }
+    writeMe(me);
     return me;
   }, []);
 
   const retry = useCallback(() => {
     if (!session.access()) {
+      clearMe();
       setStatus("anonymous");
       setUser(null);
       return;
     }
-    setStatus("loading");
+    const cached = readMe();
+    // The splash is for somebody whose name we do not know yet. A remembered
+    // account is already on screen; the ask below only confirms it.
+    if (!cached) setStatus("loading");
     setError(null);
     fetchMe().catch((cause: unknown) => {
       if (!mounted.current) return;
       if (cause instanceof ApiError && cause.status === 401) {
         session.clear();
+        clearMe();
+        clearPersistedQueries();
+        void clearMediaCache();
+        queryClient.clear();
         setUser(null);
         setStatus("anonymous");
-      } else {
-        setError(cause instanceof Error ? cause.message : "Could not reach the server.");
-        setStatus("error");
+        return;
       }
+      /*
+       * A network failure with an account already on screen is not a reason to
+       * replace the whole page with an error: the token may be perfectly good,
+       * the server may be a second away, and every screen below has its own
+       * retry. Only somebody with nothing remembered gets the full-page error.
+       */
+      if (cached) return;
+      setError(cause instanceof Error ? cause.message : "Could not reach the server.");
+      setStatus("error");
     });
-  }, [fetchMe]);
+  }, [fetchMe, queryClient]);
 
   useEffect(() => {
     if (session.access()) retry();
     const expire = () => {
       if (!mounted.current) return;
+      clearMe();
+      clearPersistedQueries();
+      void clearMediaCache();
       setUser(null);
       setStatus("anonymous");
       setError(null);
@@ -80,12 +120,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const acceptTokens = useCallback(
     async (tokens: AuthTokens) => {
+      // A new sign-in must not inherit the answers kept for the account that
+      // was here before it, even in the same tab.
+      clearPersistedQueries();
+      void clearMediaCache();
       session.set(tokens);
       if (tokens.user) {
         const me = tokens.user;
         setUser(me);
         setStatus("authenticated");
         setError(null);
+        writeMe(me);
         queryClient.setQueryData(["me"], me);
         return me;
       }
@@ -99,7 +144,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const devLogin = useCallback(
     async (target: string, password: string) => {
-      const tokens = await api.post<AuthTokens>("/auth/login/", { target, password }, { auth: false });
+      const tokens = await authService.login(target, password);
       await acceptTokens(tokens);
     },
     [acceptTokens],
@@ -108,11 +153,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     const refresh = session.refresh();
     try {
-      await api.post("/auth/logout/", refresh ? { refresh } : {});
+      await authService.logout(refresh);
     } catch {
       // The token may already be dead; local sign-out still stands.
     }
     session.clear();
+    clearMe();
+    clearPersistedQueries();
+    void clearMediaCache();
     queryClient.clear();
     if (mounted.current) {
       setUser(null);
@@ -122,7 +170,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [queryClient]);
 
   const updateUser = useCallback((patch: Partial<Me> | Me) => {
-    setUser((current) => (current ? { ...current, ...patch } : (patch as Me)));
+    setUser((current) => {
+      const next = current ? { ...current, ...patch } : (patch as Me);
+      writeMe(next);
+      return next;
+    });
   }, []);
 
   const value = useMemo<AuthContextValue>(
@@ -131,10 +183,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-export function useAuth() {
-  const context = useContext(AuthContext);
-  if (!context) throw new Error("useAuth must be used inside AuthProvider");
-  return context;
 }

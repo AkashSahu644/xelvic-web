@@ -2,14 +2,14 @@ import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Users } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { AuthedImage } from "@/components/Media";
-import { Modal } from "@/components/Modal";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { count } from "@/lib/format";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import { useTheme } from "@/providers/ThemeProvider";
+import { Avatar } from "@/components/ui/Avatar";
+import { AuthedImage } from "@/components/media/Media";
+import { Modal } from "@/components/overlays/Modal";
+import { cn } from "@/utils/cn";
+import { count } from "@/utils/format";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useTheme } from "@/hooks/useTheme";
+import { socialService } from "@/services/social.service";
 import { toneNamed } from "@/theme/shelf";
 import type { UserCard } from "@/types/api";
 
@@ -362,12 +362,6 @@ export function FaceDialog({
   );
 }
 
-/** The answer `/social/users/<id>/mutuals/` gives. */
-interface MutualsAnswer {
-  count?: number;
-  people?: UserCard[];
-}
-
 /**
  * The friends two accounts share, as a strip under a profile's numbers.
  *
@@ -457,7 +451,7 @@ export function MutualsModal({
   const { t } = usePreferences();
   const answer = useQuery({
     queryKey: ["mutuals", personId],
-    queryFn: () => api.get<MutualsAnswer>(`/social/users/${personId}/mutuals/`),
+    queryFn: () => socialService.mutuals(personId),
     enabled: open && Boolean(personId),
   });
   const people = answer.data?.people ?? [];

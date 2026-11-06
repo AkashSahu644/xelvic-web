@@ -15,11 +15,11 @@ import {
   X,
 } from "lucide-react";
 import { BiSolidUserPlus } from "react-icons/bi";
-import { Wordmark } from "@/components/Brand";
-import { Button } from "@/components/Button";
-import { useQrSignIn, type QrPhase } from "@/features/auth/useQrSignIn";
-import { API_ORIGIN } from "@/lib/env";
-import { cn } from "@/lib/cn";
+import { Wordmark } from "@/components/icons/Brand";
+import { Button } from "@/components/ui/Button";
+import { useQrSignIn, type QrPhase } from "@/hooks/useQrSignIn";
+import { API_ORIGIN } from "@/config/env";
+import { cn } from "@/utils/cn";
 
 function browserClaim() {
   const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;

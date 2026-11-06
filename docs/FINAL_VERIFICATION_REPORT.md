@@ -2,6 +2,13 @@
 
 Date: 2026-10-24
 
+**This is a dated snapshot, not the current verdict.** Its counts describe the
+client as it stood on 2026-10-24 — five theme tests, one `src/App.tsx`, a 681 kB
+bundle. The shell, the routes and the suite have all been rebuilt since. The
+live record is `XELVIC_TESTING_REPORT.md`, `XELVIC_FINAL_GAP_REPORT.md` and
+`XELVIC_FEATURE_PARITY_MATRIX.md`; the numbers below have not been re-run to
+match them and should not be quoted as current.
+
 ## Summary
 
 The existing web client has 21 route declarations in `src/App.tsx`, with 18 page components plus the app shell/redirects. `/` now opens sign-in directly; `/signin` remains as a compatibility route. The marketing landing page was removed. This is not an exhaustive APK screen count. The source-level parity documents list known missing Android destinations, and screen/interaction/API inventories are not yet exhaustive enough to support a full parity claim.

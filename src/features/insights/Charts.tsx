@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { cn } from "@/lib/cn";
-import { count } from "@/lib/format";
+import { cn } from "@/utils/cn";
+import { count } from "@/utils/format";
 import { niceTop, type InsightChange, type InsightMetric, type InsightPoint } from "./model";
 
 /**

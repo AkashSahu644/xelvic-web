@@ -1,17 +1,17 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
-import { useMediaUrl } from "@/lib/media";
+import { PlayerContext } from "@/context/player";
+import { useMediaUrl } from "@/hooks/useMediaUrl";
+import { claimEar, releaseEar } from "@/utils/playback";
 import type { Track } from "@/types/api";
 
-interface PlayerContextValue {
+export interface PlayerContextValue {
   current: Track | null;
   queue: Track[];
   index: number;
@@ -21,6 +21,8 @@ interface PlayerContextValue {
   duration: number;
   volume: number;
   failed: boolean;
+  barHidden: boolean;
+  setBarHidden: (hidden: boolean) => void;
   play: (track: Track, queue?: Track[]) => void;
   toggle: () => void;
   next: () => void;
@@ -29,8 +31,6 @@ interface PlayerContextValue {
   setVolume: (volume: number) => void;
   close: () => void;
 }
-
-const PlayerContext = createContext<PlayerContextValue | null>(null);
 
 function streamOf(track: Track | null) {
   if (!track) return null;
@@ -47,6 +47,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolumeState] = useState(0.9);
+  const [barHidden, setBarHidden] = useState(false);
   const wantPlay = useRef(false);
   const media = useMediaUrl(streamOf(current));
 
@@ -82,14 +83,24 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (!audio) return;
     const onTime = () => setTime(audio.currentTime);
     const onDuration = () => setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
+    // The music bar is one of the things that can be heard, so it obeys the
+    // app's one-ear rule like every clip does: starting takes the ear off
+    // whatever was playing, and stopping gives it back. See `lib/playback`.
     const onPlay = () => {
+      claimEar(audio);
       setPlaying(true);
       setLoading(false);
     };
-    const onPause = () => setPlaying(false);
+    const onPause = () => {
+      releaseEar(audio);
+      setPlaying(false);
+    };
     const onWaiting = () => setLoading(true);
     const onPlaying = () => setLoading(false);
     const onEnded = () => {
+      // An element that ran out is not paused by the browser, so it gives the
+      // ear back here rather than waiting for a `pause` that never comes.
+      releaseEar(audio);
       setPlaying(false);
       setIndex((currentIndex) => {
         if (currentIndex < 0) return currentIndex;
@@ -272,6 +283,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       duration,
       volume,
       failed: media.failed,
+      barHidden,
+      setBarHidden,
       play,
       toggle,
       next: () => move(1),
@@ -280,7 +293,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setVolume,
       close,
     }),
-    [current, queue, index, playing, loading, time, duration, volume, media.failed, play, toggle, move, seek, setVolume, close],
+    [current, queue, index, playing, loading, time, duration, volume, media.failed, barHidden, play, toggle, move, seek, setVolume, close],
   );
 
   return (
@@ -291,8 +304,3 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function usePlayer() {
-  const context = useContext(PlayerContext);
-  if (!context) throw new Error("usePlayer must be used inside PlayerProvider");
-  return context;
-}

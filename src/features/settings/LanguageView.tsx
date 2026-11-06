@@ -1,6 +1,6 @@
 import { Check, Languages, Smartphone } from "lucide-react";
 import { SettingsRow, SettingsRows } from "@/features/settings/parts";
-import { usePreferences, type AppLanguage } from "@/providers/PreferencesProvider";
+import { usePreferences, type AppLanguage } from "@/hooks/usePreferences";
 
 /**
  * The language the app speaks.

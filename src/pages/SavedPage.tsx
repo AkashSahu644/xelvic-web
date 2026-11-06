@@ -2,17 +2,18 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bookmark, CloudOff } from "lucide-react";
-import { Blank } from "@/components/Blank";
-import { PageHeader } from "@/components/Page";
-import { api } from "@/lib/api";
-import { ago, count } from "@/lib/format";
-import { errorMessage } from "@/lib/errors";
+import { Blank } from "@/components/ui/Blank";
+import { PageHeader } from "@/components/layout/Page";
+import { ago, count } from "@/utils/format";
+import { errorMessage } from "@/utils/errors";
 import { trackLine, trackUnder } from "@/features/audio/parts";
 import { SavedRowLeading } from "@/features/saved/Leading";
 import { cardOf, kindOf, SHELF_KINDS } from "@/features/saved/model";
-import { SAVED_SHELF_KEY, useSaved } from "@/features/saved/store";
-import { usePlayer } from "@/providers/PlayerProvider";
-import { usePreferences } from "@/providers/PreferencesProvider";
+import { useSaved } from "@/hooks/useSaved";
+import { SAVED_SHELF_KEY } from "@/store/saved";
+import { usePlayer } from "@/hooks/usePlayer";
+import { usePreferences } from "@/hooks/usePreferences";
+import { savedService } from "@/services/saved.service";
 import type { SavedShelf, SavedThing } from "@/types/api";
 
 /**
@@ -228,7 +229,7 @@ export function SavedPage() {
     // Asked on every visit rather than only when the list is empty: this is the
     // one place the whole shelf is on screen, and a stale row here is a row
     // about a thing that may no longer be openable.
-    queryFn: () => api.get<SavedShelf>("/saved/"),
+    queryFn: () => savedService.shelf(),
   });
 
   const rows = useMemo(() => shelf.data?.items ?? [], [shelf.data]);

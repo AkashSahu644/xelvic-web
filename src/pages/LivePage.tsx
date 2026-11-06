@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  CalendarClock,
   Headphones,
   Mic2,
   Plus,
@@ -12,26 +11,19 @@ import {
   Users,
   Video,
 } from "lucide-react";
-import { Avatar, AvatarStack } from "@/components/Avatar";
-import { Button } from "@/components/Button";
-import { Modal } from "@/components/Modal";
-import { PageHeader, Tabs } from "@/components/Page";
-import { EmptyState, ErrorState, PageSkeleton } from "@/components/States";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { count, relativeTime } from "@/lib/format";
-import { useSocketEvent } from "@/providers/SocketProvider";
-import { useToast } from "@/providers/ToastProvider";
+import { Avatar, AvatarStack } from "@/components/ui/Avatar";
+import { Button } from "@/components/ui/Button";
+import { PageHeader, Tabs } from "@/components/layout/Page";
+import { EmptyState, ErrorState, PageSkeleton } from "@/components/ui/States";
+import { cn } from "@/utils/cn";
+import { relativeTime } from "@/utils/format";
+import { spacesService } from "@/services/spaces.service";
+import { OpenRoomSheet } from "@/features/live/OpenRoomSheet";
+import { crowdLine } from "@/features/live/parts";
+import { useSocketEvent } from "@/hooks/useSocket";
 import type { SpacePerson, SpaceRoom, UserCard } from "@/types/api";
 
 type Shelf = "live" | "upcoming" | "ended" | "mine";
-type RoomKind = "room" | "stream" | "ama";
-
-const kinds: { key: RoomKind; label: string; body: string; icon: typeof Mic2 }[] = [
-  { key: "room", label: "Audio room", body: "A stage, a host, and people listening.", icon: Mic2 },
-  { key: "stream", label: "Video stream", body: "A camera on the stage and a room watching.", icon: Video },
-  { key: "ama", label: "AMA", body: "Questions from the audience, answers from the host.", icon: Sparkles },
-];
 
 function roomPerson(person?: SpacePerson | null): UserCard | null {
   if (!person?.user) return null;
@@ -76,7 +68,7 @@ function RoomCard({ room }: { room: SpaceRoom }) {
         {room.note ? <p className="line-clamp-2 text-[11px] leading-5 text-dim">{room.note}</p> : null}
         <div className="mt-3 flex items-center gap-3">
           {stage.length ? <AvatarStack users={stage} size={25} /> : <Avatar user={host} size={26} />}
-          <span className="flex items-center gap-1 text-[10px] font-bold text-dim"><Headphones className="size-3" /> {count(room.listeners)}</span>
+          <span className="flex items-center gap-1 text-[10px] font-bold text-dim"><Headphones className="size-3" /> {crowdLine(room)}</span>
           {room.hands ? <span className="flex items-center gap-1 text-[10px] font-bold text-dim"><Users className="size-3" /> {room.hands} hands</span> : null}
           <span className="ml-auto text-[10px] font-bold text-accent">
             {live ? "Join" : room.starts_at ? relativeTime(room.starts_at) : room.state === "ended" ? "Ended" : "Open"}
@@ -95,57 +87,17 @@ function RoomCard({ room }: { room: SpaceRoom }) {
 export function LivePage() {
   const [shelf, setShelf] = useState<Shelf>("live");
   const [createOpen, setCreateOpen] = useState(false);
-  const [kind, setKind] = useState<RoomKind>("room");
-  const [title, setTitle] = useState("");
-  const [note, setNote] = useState("");
-  const [tags, setTags] = useState("");
-  const [startsAt, setStartsAt] = useState("");
-  const [saving, setSaving] = useState(false);
   const queryClient = useQueryClient();
-  const { toast } = useToast();
 
   const rooms = useQuery({
     queryKey: ["rooms", shelf],
-    queryFn: () => api.get<{ shelf: string; rooms: SpaceRoom[] }>("/spaces/", { query: { shelf } }),
+    queryFn: () => spacesService.shelf(shelf),
     staleTime: 15_000,
   });
 
   useSocketEvent(["room.new", "room.update", "room.gone"], () => {
     void queryClient.invalidateQueries({ queryKey: ["rooms"] });
   });
-
-  async function createRoom() {
-    if (!title.trim()) {
-      toast({ title: "Give the room a name", tone: "error" });
-      return;
-    }
-    setSaving(true);
-    try {
-      const made = await api.post<{ room: SpaceRoom }>("/spaces/", {
-        title: title.trim(),
-        note: note.trim(),
-        kind,
-        tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 4),
-        starts_at: startsAt ? new Date(startsAt).toISOString() : null,
-      });
-      setCreateOpen(false);
-      setTitle("");
-      setNote("");
-      setTags("");
-      setStartsAt("");
-      await queryClient.invalidateQueries({ queryKey: ["rooms"] });
-      toast({ title: startsAt ? "Room announced" : "Room is on", tone: "success" });
-      if (made.room?.id) window.location.assign(`/app/live/${made.room.id}`);
-    } catch (error) {
-      toast({
-        title: "Could not open that room",
-        description: error instanceof Error ? error.message : "Try again.",
-        tone: "error",
-      });
-    } finally {
-      setSaving(false);
-    }
-  }
 
   const rows = rooms.data?.rooms ?? [];
 
@@ -206,61 +158,7 @@ export function LivePage() {
         )}
       </div>
 
-      <Modal
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        title="Open a room"
-        description="A name, what kind of room it is, and when it starts."
-        size="lg"
-        footer={
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setCreateOpen(false)}>Cancel</Button>
-            <Button onClick={() => void createRoom()} loading={saving}>{startsAt ? "Announce it" : "Go live"}</Button>
-          </div>
-        }
-      >
-        <div className="space-y-4 px-5 py-4">
-          <div>
-            <span className="mb-1.5 block text-[11px] font-bold text-dim">Kind</span>
-            <div className="grid gap-2 sm:grid-cols-3">
-              {kinds.map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => setKind(item.key)}
-                  className={cn(
-                    "rounded-[14px] border p-3 text-left transition",
-                    kind === item.key ? "border-accent bg-[var(--accent-soft)]" : "border-line hover:border-accent/30",
-                  )}
-                >
-                  <item.icon className={cn("size-4", kind === item.key ? "text-accent" : "text-dim")} />
-                  <span className="mt-1.5 block text-[12px] font-extrabold">{item.label}</span>
-                  <span className="mt-0.5 block text-[10px] leading-4 text-dim">{item.body}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-          <label className="block">
-            <span className="mb-1.5 block text-[11px] font-bold text-dim">Name</span>
-            <input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={140} placeholder="Sunday listening" className="field w-full" />
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-[11px] font-bold text-dim">Note</span>
-            <textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={200} rows={2} placeholder="What is this room about?" className="field w-full resize-none" />
-          </label>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className="mb-1.5 block text-[11px] font-bold text-dim">Tags</span>
-              <input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="music, late night" className="field w-full" />
-            </label>
-            <label className="block">
-              <span className="mb-1.5 flex items-center gap-1 text-[11px] font-bold text-dim"><CalendarClock className="size-3" /> Starts at</span>
-              <input type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} className="field w-full" />
-            </label>
-          </div>
-          <p className="text-[10px] leading-4 text-dim">Leave the start time empty to go on air immediately. A future time announces the room instead.</p>
-        </div>
-      </Modal>
+      <OpenRoomSheet open={createOpen} onClose={() => setCreateOpen(false)} />
     </div>
   );
 }

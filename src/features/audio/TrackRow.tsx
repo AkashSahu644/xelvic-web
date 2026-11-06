@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Heart, ListMusic, Pause, Play, Trash2 } from "lucide-react";
-import { AuthedImage } from "@/components/Media";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { count, duration } from "@/lib/format";
-import { usePlayer } from "@/providers/PlayerProvider";
-import { useToast } from "@/providers/ToastProvider";
+import { AuthedImage } from "@/components/media/Media";
+import { audioService } from "@/services/audio.service";
+import { cn } from "@/utils/cn";
+import { count, duration } from "@/utils/format";
+import { usePlayer } from "@/hooks/usePlayer";
+import { useToast } from "@/hooks/useToast";
 import type { Track } from "@/types/api";
 
 export function TrackRow({
@@ -36,7 +36,7 @@ export function TrackRow({
     if (busy) return;
     setBusy(true);
     try {
-      const next = await api.post<{ liked: boolean }>(`/audio/tracks/${track.id}/like/`);
+      const next = await audioService.like<{ liked: boolean }>(track.id);
       setLiked(next.liked);
     } catch (error) {
       toast({

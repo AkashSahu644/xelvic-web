@@ -167,7 +167,7 @@ export function fullDay(value: string | Date | null | undefined): string {
  * reading them from here, beside the `stamp` that is deliberately a *different*
  * ladder.
  */
-export { ago, shortDay } from "@/lib/format";
+export { ago, shortDay } from "@/utils/format";
 
 /**
  * The short stamp a list row carries: `stamp` on the phone — 'now', '5m', '3h',

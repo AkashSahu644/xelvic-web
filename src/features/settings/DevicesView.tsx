@@ -12,14 +12,14 @@ import {
   Tag,
   type LucideIcon,
 } from "lucide-react";
-import { ConfirmDialog, Modal } from "@/components/Modal";
-import { Spinner } from "@/components/Button";
-import { api, request } from "@/lib/api";
-import { ApiError } from "@/lib/errors";
-import { ago } from "@/lib/format";
-import { cn } from "@/lib/cn";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import { useToast } from "@/providers/ToastProvider";
+import { ConfirmDialog, Modal } from "@/components/overlays/Modal";
+import { Spinner } from "@/components/ui/Button";
+import { ApiError } from "@/utils/errors";
+import { ago } from "@/utils/format";
+import { cn } from "@/utils/cn";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useToast } from "@/hooks/useToast";
+import { authService } from "@/services/auth.service";
 import type { Device } from "@/types/api";
 
 /**
@@ -148,7 +148,7 @@ export function DevicesView() {
 
   const devices = useQuery({
     queryKey: ["devices"],
-    queryFn: () => api.get<Device[]>("/auth/devices/"),
+    queryFn: () => authService.devices(),
   });
 
   /** A removal is in the air. One at a time: two would race to describe the list. */
@@ -170,16 +170,13 @@ export function DevicesView() {
     const label = titleOf(t, row);
     setBusy(true);
     try {
-      // `api.delete` carries no body, and this one needs one: a DELETE whose
+      // A DELETE with a body, which is unusual enough to say out loud: the
       // body is the account password. The phone does exactly this
       // (`Session.it.api.delete(url, {'password': password})`) and the server
       // reads it the same way for both, out of `request.data` — see
-      // `DeviceDetailView.delete`. So the request is built by hand here rather
-      // than widening `api.delete` for a single caller.
-      await request(`/auth/devices/${row.id}/`, {
-        method: "DELETE",
-        body: secret ? { password: secret } : undefined,
-      });
+      // `DeviceDetailView.delete`. `authService.removeDevice` is the one place
+      // that shape lives now.
+      await authService.removeDevice(row.id, secret || undefined);
       setAsking(null);
       setConfirming(null);
       setPassword("");
@@ -202,9 +199,7 @@ export function DevicesView() {
     if (busy) return;
     setBusy(true);
     try {
-      const answer = await request<{ ended?: number; kept?: number }>("/auth/devices/others/", {
-        method: "DELETE",
-      });
+      const answer = await authService.removeOtherDevices();
       const ended = Number(answer?.ended ?? 0);
       const kept = Number(answer?.kept ?? 0);
       // A count is a word of its own in some languages, so the sentence is

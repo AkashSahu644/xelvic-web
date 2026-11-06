@@ -1,4 +1,4 @@
-import { count } from "@/lib/format";
+import { count } from "@/utils/format";
 import type { Alert } from "@/types/api";
 
 export function alertWho(alert: Alert) {
@@ -221,8 +221,9 @@ export function alertPath(alert: Alert): string | null {
   if (target.kind === "profile") {
     return alert.actor ? `/app/u/${encodeURIComponent(alert.actor.username)}` : null;
   }
-  // A Memory is the one subject the web has no reader for yet; the list says so
-  // rather than opening nothing. See `openAlert` in `AlertsPage`.
+  // A Memory's only read is its shelf, so the Moments page opens it out of the
+  // shelf it belongs to. See the `?memory=` effect in `MomentsPage`.
+  if (target.kind === "memory") return `/app/moments?memory=${encodeURIComponent(String(target.id))}`;
   return null;
 }
 

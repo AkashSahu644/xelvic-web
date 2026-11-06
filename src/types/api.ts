@@ -4,6 +4,24 @@ export interface Page<T> {
   results: T[];
   next: string | null;
   previous?: string | null;
+  /**
+   * Why a fresh page came back empty, when it did.
+   *
+   * Only the Drops feed answers this (`apps/drops/views.py`, `DropFeedView`):
+   * an empty first page is either a corpus with nothing in it or a corpus this
+   * reader has finished, and the two must not be drawn as the same sentence.
+   * Only a `seen=strict` page can be empty for the second reason.
+   */
+  caught_up?: boolean;
+  /**
+   * How many of this reader's feed cards should be Vibes, `0.20..0.40`.
+   *
+   * Only the Drops feed answers this (`services.feed_vibe_share`): the server
+   * states the policy and the client does the weaving, because where a clip
+   * falls is a decision about a page that is being laid out and the server is
+   * not the one laying it out. See `features/drops/mix.ts`.
+   */
+  vibe_share?: number;
 }
 
 /**
@@ -46,6 +64,17 @@ export interface UserCard {
   last_seen?: string | null;
   theme?: string | null;
   verified?: boolean;
+  /**
+   * Their birthday as `MM-DD`, or nothing — the one piece of a date of birth
+   * that may leave the server, and only through the owner's `show_dob`.
+   *
+   * On the card rather than worked out here, because it cannot be worked out
+   * here. It is on *every* card and not only on the convo row the cake was asked
+   * for, so that the day somebody is born is one fact told once — see
+   * `UserCardSerializer.get_birthday`. Read through `isBirthdayTodayIn`, which is
+   * also where the "is it a real day of the year" check lives.
+   */
+  birthday?: string | null;
 }
 
 export interface Me extends UserCard {
@@ -445,7 +474,15 @@ export interface Poll {
 export interface Sticker {
   id: ID;
   name: string;
-  keywords?: string[];
+  /**
+   * The words a search is matched against.
+   *
+   * A comma-separated string, not a list: the column is a `CharField` and the
+   * serializer sends it as it is stored (`apps/stickers/models.py`). It was
+   * typed as a list here, which nothing read until the sticker shelf started
+   * searching by it.
+   */
+  keywords?: string;
   url: string | null;
   width?: number;
   height?: number;
@@ -637,10 +674,27 @@ export interface Moment {
   credit?: UserCard | null;
   source_id?: ID | null;
   items: MomentItem[];
-  created_at: string;
+  /**
+   * When it went up — absent on a Memory, which has no day.
+   *
+   * The viewer draws the same walk over both kinds, so this is the same shape
+   * with the one field missing rather than a second type for the other half of
+   * it. `timeAgoShort` already reads an absent value as "say nothing".
+   */
+  created_at?: string;
   expires_at?: string;
   seen?: boolean;
   mine?: boolean;
+  /**
+   * Whether this walk is a Memory rather than somebody's day.
+   *
+   * The phone marks one on the payload (`isMemory`) and the viewer reads it for
+   * everything that differs: a Memory has no watchers, is never marked seen,
+   * cannot be kept in a Memory, is never carried, and answers at routes of its
+   * own (`/moments/memories/{id}/reply/`, `/react/`, `/reactors/`, `/share/`).
+   * See `Moment` in `app/lib/moments.dart` and `_memory` in `moment_view.dart`.
+   */
+  isMemory?: boolean;
   viewers?: number | UserCard[] | null;
   reactions?: MomentReactions;
   /**
@@ -724,7 +778,22 @@ export interface Message {
   asset?: Asset | null;
   payload?: Record<string, unknown> | null;
   poll?: MessagePoll | null;
-  reactions?: { emoji: string; count: number }[];
+  /**
+   * The tally under a bubble, and who is behind each row of it.
+   *
+   * `users` was missing from this type while the server had been sending it all
+   * along — `MessageSerializer.get_reactions` builds every row with
+   * `chat.services.reactor_of` in it. The app draws up to two of those faces
+   * inside the chip (see `_faces` in `screens/chat.dart`), which a browser could
+   * not do while the field was not declared. The shape is the server's, not a
+   * guess: handle, name, the blue check, and the avatar as a storage path the
+   * media join turns into an address.
+   */
+  reactions?: {
+    emoji: string;
+    count: number;
+    users?: MessageReactor[];
+  }[];
   my_reaction?: string | null;
   can_copy?: boolean;
   held?: boolean;
@@ -737,6 +806,22 @@ export interface Message {
   updated_at?: string;
   pending?: boolean;
   failed?: boolean;
+}
+
+/**
+ * One person's reaction to something, in the smallest shape a chip can draw.
+ *
+ * `chat.services.reactor_of` in the backend, which is also what a live
+ * `message.react` frame carries — so the faces under a bubble are the same
+ * whether they arrived with the thread or a moment later. `avatar` is a storage
+ * path rather than an address, the same as everywhere else in this file.
+ */
+export interface MessageReactor {
+  id: string;
+  username: string;
+  name: string;
+  verified?: boolean;
+  avatar?: string | null;
 }
 
 export interface MessagePollOption {
@@ -792,6 +877,14 @@ export interface ThreadCard {
   unread_other_count?: number;
   pinned?: boolean;
   muted?: boolean;
+  /**
+   * My own convo with myself — the one row with no second person in it.
+   *
+   * It has its own line: there is nobody whose words could be it, so the row
+   * says how far my own newest one got, or that there is nothing in it yet.
+   * See `listLine`.
+   */
+  self?: boolean;
   vaulted?: boolean;
   spark_off?: boolean;
   locked?: boolean;
@@ -876,6 +969,27 @@ export interface Track {
   title: string;
   artist: string;
   artist_slug?: string;
+  /**
+   * The person behind the row, when that person is not an artist.
+   *
+   * A catalogue track's `artist_slug` is a row in the artist table and is what
+   * an artist page is asked for. An uploaded sound's is somebody's *username*,
+   * so `sound_row` carries the account beside it — the two fields an upload's
+   * row adds, and the reason a screen that opened the artist page from a sound
+   * used to draw an empty page under the uploader's own name.
+   */
+  artist_id?: string;
+  artist_avatar?: string | null;
+  /**
+   * Which half of the board the row came off — `"catalogue"`, `"drop"`, or a
+   * link's own `"playlist"`.
+   *
+   * The cue that decides what a row's own writes address: an upload's id is the
+   * drop's and its heart and its bookmark go to the drop's routes, while a
+   * catalogue row's go to `/audio/tracks/`. `TrackListView` sends it on every
+   * row and a board row carries it too.
+   */
+  source?: string;
   series?: string | null;
   episode?: number | null;
   seconds?: number;
@@ -918,6 +1032,149 @@ export interface AudioHome {
   playlists: Playlist[];
   podcasts: Track[];
   artists: { name: string; slug?: string; avatar?: string | null; tracks?: number; listeners?: number }[];
+  /** The weekly board, which rides along with the tab — `services.trending`. */
+  trending?: AudioBoard;
+}
+
+/**
+ * A shelf's card, as `GET /audio/categories/` sends it.
+ *
+ * `total` may be zero: the options are the section's whole vocabulary rather
+ * than only what happens to be in the catalogue, so an empty shelf is still a
+ * real door that opens onto an honest empty page.
+ */
+export interface AudioCategory {
+  key: string;
+  title: string;
+  subtitle?: string;
+  outcome?: string;
+  window_hours?: number;
+  total: number;
+}
+
+/** One language the section can be asked for, with what is behind it. */
+export interface AudioLanguage {
+  code: string;
+  name?: string;
+  total: number;
+}
+
+/** One mood the section can be asked for, with what is behind it. */
+export interface AudioMood {
+  key: string;
+  total: number;
+}
+
+/** The front of the Audio section: the chips, and the filter options. */
+export interface AudioCatalogue {
+  categories: AudioCategory[];
+  languages: AudioLanguage[];
+  moods: AudioMood[];
+  /** The language the Language shelf should open on. */
+  current?: string;
+}
+
+/**
+ * One row on a shelf — a catalogue track, an uploaded sound, or (on the
+ * playlists board) a shelf.
+ *
+ * `score`, `band` and `badge` are nullable on purpose: the server refuses to
+ * score audio it has not measured enough of, and "not measured yet" is not a
+ * zero. `source` says which half of the catalogue the row came from, and is
+ * what decides whether the heart is `audio/tracks/{id}/like/` or the drop's
+ * own route.
+ */
+export interface AudioRow {
+  id: ID;
+  kind?: string;
+  title?: string;
+  artist?: string;
+  artist_slug?: string;
+  artist_id?: string;
+  artist_avatar?: string | null;
+  series?: string | null;
+  episode?: number | string | null;
+  seconds?: number;
+  duration?: number;
+  plays?: number;
+  seed?: number | string;
+  liked?: boolean;
+  cover?: CoverRef | null;
+  stream?: string | null;
+  source?: string;
+  sound_kind?: string;
+  item?: ID | null;
+  language?: string;
+  country?: string;
+  genres?: string[];
+  moods?: string[];
+  score?: number | null;
+  band?: string | null;
+  badge?: string | null;
+  stage?: string;
+  why?: string;
+  rank?: number;
+  place?: number;
+  views?: number;
+  likes?: number;
+  pinned?: boolean;
+  /* A shelf row on the playlists board carries these instead of a title. */
+  name?: string;
+  owner?: string;
+  owner_username?: string;
+  count?: number;
+  mine?: boolean;
+  shared?: boolean;
+}
+
+/** One page of one shelf, with the shelf's own explanation of itself. */
+export interface AudioShelfPage {
+  key: string;
+  outcome?: string;
+  why?: string;
+  page?: number;
+  page_size?: number;
+  total?: number;
+  window_hours?: number;
+  has_more?: boolean;
+  rows: AudioRow[];
+}
+
+/** One chart of the weekly board. */
+export interface AudioBoardSection {
+  key: string;
+  label: string;
+  week: string;
+  asked?: string;
+  stale?: boolean;
+  rows: AudioRow[];
+}
+
+/** An account with a play to its name — `services.creators`. */
+export interface AudioCreator {
+  id: ID;
+  name: string;
+  username: string;
+  avatar?: string | null;
+  verified?: boolean;
+  plays: number;
+  sounds: number;
+}
+
+/**
+ * The weekly board: one chart per shelf, and who is on top.
+ *
+ * `boards` is the list the app draws, in the order the server means it to be
+ * read. The three named keys are the same rows under the names the tab has
+ * always read, and are only consulted when a server answers without `boards`.
+ */
+export interface AudioBoard {
+  week?: string;
+  sounds?: AudioRow[];
+  podcasts?: AudioRow[];
+  playlists?: AudioRow[];
+  boards?: AudioBoardSection[];
+  creators?: AudioCreator[];
 }
 
 export interface SpacePerson {
@@ -995,6 +1252,34 @@ export interface Spark {
   mine?: boolean;
   theirs?: boolean;
   saved?: boolean;
+  /**
+   * Whether the run broke — 48 hours of silence on one side — rather than never
+   * having started. Read by the sheet; the chat row reads `shows` off it.
+   */
+  broken?: boolean;
+  /**
+   * The price of buying a broken run back, while it is inside its two days.
+   * Absent at every other moment, which is most of them.
+   */
+  offer?: { price?: number; count?: number } | null;
+  /**
+   * The ladder, with the rungs this conversation has reached marked `lit`.
+   *
+   * Lit from the *best* and not from the run, which is why a dead spark can
+   * still show a Century: the ladder records what was reached.
+   */
+  ladder?: { key?: string; lit?: boolean }[] | null;
+  /** When a broken pair leaves the list: the break plus two days. */
+  hold_until?: string | null;
+  /** When each side last sent something. */
+  mine_last?: string | null;
+  theirs_last?: string | null;
+  /** Each side's own clock, as the server read it. */
+  mine_left?: number | null;
+  theirs_left?: number | null;
+  /** Whether a side is past 24 hours of silence, which is when its timer shows. */
+  timer_mine?: boolean;
+  timer_theirs?: boolean;
   last_counted?: string | null;
   stage?: SparkTier | null;
   second?: SparkTier | null;
@@ -1386,4 +1671,79 @@ export interface DealPage {
 export interface CreatorPage {
   results: DealUser[];
   next: string | null;
+}
+
+/**
+ * One interest the monthly picker offers — `Interest` in `app/lib/circles.dart`.
+ *
+ * Called a *field* behind the wire (`apps.circles.models.Field`) and an
+ * interest on every screen it is drawn on, which is the brief's own word. The
+ * two never meet in one place except here, which is why this comment exists:
+ * `key` is what the server is told, `name` is what a person reads.
+ */
+export interface CircleField {
+  id: ID;
+  key: string;
+  name: string;
+  blurb: string;
+  /** Chosen *this month*. The choice is monthly and the server is what resets it. */
+  picked: boolean;
+  /** The circle it put this account in, once it has — or null. */
+  circle: string | null;
+}
+
+/** The sentence one circle was asked on one day — `CircleTask` on the phone. */
+export interface CircleTask {
+  id: ID;
+  /** The sentence with the seed word already in it: *Sing something on the word "barish"*. */
+  text: string;
+  /** The *shape* of the answer: `text`, `picture`, `clip` or `sound`. */
+  kind: "text" | "picture" | "clip" | "sound" | string;
+  hint: string;
+  seed: string;
+  day?: string;
+}
+
+/**
+ * One circle as it stands today — `CircleDay` in `app/lib/circles.dart`.
+ *
+ * `task` is null while the day is still sealed: the server holds the question
+ * until the hour it opens on, because a circle is fifty people answering one
+ * thing at the same time and a task handed over at breakfast is one written in
+ * advance. `open` alone cannot tell "not yet" from "over" — that is what
+ * `opens_in` is for.
+ */
+export interface CircleDay {
+  id: ID;
+  field: { id: ID; key: string; name: string };
+  /** ISO-2, or empty for everybody who never said. */
+  country: string;
+  task: CircleTask | null;
+  open: boolean;
+  posted: boolean;
+  post: string | null;
+  /** Seconds left in today's window, 0 once it is over. */
+  closes_in: number;
+  /** Seconds until today's window opens, 0 once it has. */
+  opens_in: number;
+  count: number;
+  /** Days in a row this account has posted — the member's run, not the circle's. */
+  run: number;
+  size: number;
+  seats: number;
+  opens_at?: string | null;
+  closes_at?: string | null;
+  /** Today's posts, best first — ordinary drops, so an ordinary card draws one. */
+  board: Drop[];
+  members: UserCard[];
+}
+
+/** `GET /circles/fields/`, the picker's own answer. */
+export interface CircleFields {
+  fields: CircleField[];
+  kinds: { key: string; label: string }[];
+  month: string;
+  max_picks: number;
+  size: number;
+  country: string;
 }

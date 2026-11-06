@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  EDIT_BACKGROUNDS,
   EDIT_FILTERS,
   EDIT_FONTS,
   aspectValue,
@@ -8,6 +9,7 @@ import {
   fontByKey,
   frameAspect,
   frameForMode,
+  inkOn,
 } from "./editorTypes";
 
 describe("editor frame helpers", () => {
@@ -47,6 +49,45 @@ describe("editor filter and font lookup", () => {
     expect(EDIT_FONTS.map((font) => font.label)).toEqual(["Classic", "Poet", "BOLD", "whisper", "Neo"]);
     expect(fontByKey("neo").key).toBe("neo");
     expect(fontByKey("missing").key).toBe("classic");
+  });
+});
+
+describe("ink on the editor's own colours", () => {
+  it("puts dark words on a light plate and light words on a dark one", () => {
+    expect(inkOn("#ffffff")).toBe("text-[#111111]");
+    expect(inkOn("#111111")).toBe("text-white");
+    expect(inkOn("#ffec3d")).toBe("text-[#111111]");
+    expect(inkOn("#ec1670")).toBe("text-white");
+  });
+
+  it("reads the panel's own ink where the panel is the ground", () => {
+    expect(inkOn("transparent")).toBe("text-ink");
+    // A plate the panel shows through is the panel, whatever colour it claims.
+    expect(inkOn("rgba(0,0,0,.4)")).toBe("text-ink");
+    expect(inkOn("")).toBe("text-ink");
+  });
+
+  it("reads the translucent ends of the plate row against what shows through", () => {
+    expect(inkOn("rgba(0,0,0,.62)")).toBe("text-white");
+    expect(inkOn("rgba(255,255,255,.9)")).toBe("text-[#111111]");
+  });
+
+  it("never paints a plate's name in the plate's own colour", () => {
+    // The regression the helper exists for: "White" was a near-white plate with
+    // white words on it, which is a plate that reads as an empty one.
+    const plate = (key: string) =>
+      inkOn(EDIT_BACKGROUNDS.find((item) => item.key === key)!.value);
+    expect(plate("white")).not.toBe("text-white");
+    expect(plate("black")).not.toBe("text-[#111111]");
+    expect(plate("white")).not.toBe(plate("black"));
+  });
+
+  it("answers every plate in the row with a definite ink", () => {
+    for (const item of EDIT_BACKGROUNDS) {
+      const ink = inkOn(item.value);
+      if (item.key === "none") expect(ink).toBe("text-ink");
+      else expect(["text-white", "text-[#111111]"]).toContain(ink);
+    }
   });
 });
 

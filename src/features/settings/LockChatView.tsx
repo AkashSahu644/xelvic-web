@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { LockKeyhole, RotateCcwKey } from "lucide-react";
-import { ConfirmDialog, Modal } from "@/components/Modal";
-import { Spinner } from "@/components/Button";
-import { api } from "@/lib/api";
-import { ApiError } from "@/lib/errors";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import { useToast } from "@/providers/ToastProvider";
+import { ConfirmDialog, Modal } from "@/components/overlays/Modal";
+import { Spinner } from "@/components/ui/Button";
+import { chatService } from "@/services/chat.service";
+import { ApiError } from "@/utils/errors";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useToast } from "@/hooks/useToast";
 import { DotLine } from "./parts";
 
 /**
@@ -46,7 +46,7 @@ export function LockChatView({ onDone }: { onDone: () => void }) {
     if (!password || busy) return;
     setBusy(true);
     try {
-      await api.post("/chat/vault/reset/", { password });
+      await chatService.vaultReset(password);
       setPassword("");
       setAsking(false);
       await client.invalidateQueries({ queryKey: ["vault"] });

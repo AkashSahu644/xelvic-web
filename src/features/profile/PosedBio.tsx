@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BUNDLED_POSES, figurePoses, CLASSIC_FIGURE } from "@/features/marketplace/model";
-import { useDripShelf } from "@/features/marketplace/queries";
-import { cn } from "@/lib/cn";
+import { useDripShelf } from "@/hooks/useMarketplace";
+import { cn } from "@/utils/cn";
 
 /**
  * A bio with the person's figure standing beside it, saying it.

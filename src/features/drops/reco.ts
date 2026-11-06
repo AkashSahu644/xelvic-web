@@ -1,4 +1,5 @@
-import { api } from "@/lib/api";
+import { recoService } from "@/services/reco.service";
+import { dropIsVibe } from "./model";
 import type { Drop } from "@/types/api";
 
 /**
@@ -37,7 +38,24 @@ const session =
     : `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
 function note(body: Record<string, unknown>) {
-  void api.post("/reco/signals/", { session, ...body }).catch(() => undefined);
+  void recoService.signal({ session, ...body }).catch(() => undefined);
+}
+
+/**
+ * Which row a signal names, in the server's own vocabulary.
+ *
+ * `Reco.served` writes `'kind': row.isVibe ? 'vibe' : 'drop'` and `_view`
+ * writes the same, and this used to answer `vibe` for whatever it was handed.
+ * That was invisible while only a shelf was ever reported, and it is wrong the
+ * moment a *plain* video is watched in the walk — which is exactly what the walk
+ * does when somebody presses a video in the feed. `apps/reco/services.py` holds
+ * `_KINDS = {"drop": Drop, "vibe": Vibe, "track": Track}` and resolves every id
+ * against the table its `kind` names, so a clip sent as a `vibe` whose id is a
+ * Drop's is a row `_existing` cannot find: it is dropped, silently, and the
+ * creator's studio draws a clip that was watched as never watched.
+ */
+function kindOf(drop: Drop): "vibe" | "drop" {
+  return dropIsVibe(drop) ? "vibe" : "drop";
 }
 
 /** The clips a shelf drew, in the order it drew them — `Reco.served`. */
@@ -46,7 +64,7 @@ export function reportVibesShown(rows: Drop[]) {
   note({
     surface: "vibes",
     served: rows.map((row, pos) => ({
-      kind: "vibe",
+      kind: kindOf(row),
       id: row.id,
       surface: "vibes",
       pos,
@@ -90,7 +108,7 @@ export function reportVibeLook(drop: Drop, look: VibeLook) {
     surface: "vibes",
     views: [
       {
-        kind: "vibe",
+        kind: kindOf(drop),
         id: drop.id,
         ms: Math.round(look.ms),
         pct: Math.min(1, Math.max(0, look.pct)),

@@ -22,14 +22,14 @@ import {
   WifiOff,
   X,
 } from "lucide-react";
-import { Button, Spinner } from "@/components/Button";
-import { Modal } from "@/components/Modal";
-import { VerifiedTick } from "@/components/Tick";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { ApiError } from "@/lib/errors";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import { useToast } from "@/providers/ToastProvider";
+import { Button, Spinner } from "@/components/ui/Button";
+import { Modal } from "@/components/overlays/Modal";
+import { VerifiedTick } from "@/components/icons/Tick";
+import { verifyService } from "@/services/verify.service";
+import { cn } from "@/utils/cn";
+import { ApiError } from "@/utils/errors";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useToast } from "@/hooks/useToast";
 import type { VerifyStatus } from "@/types/api";
 
 /**
@@ -136,7 +136,7 @@ export function VerifyView() {
 
   const status = useQuery({
     queryKey: ["verify-status"],
-    queryFn: () => api.get<VerifyStatus>("/verify/status/"),
+    queryFn: () => verifyService.status(),
   });
 
   // The form.
@@ -217,7 +217,7 @@ export function VerifyView() {
         form.append("documents", doc.file);
         form.append("labels", doc.label.trim());
       }
-      await api.form("/verify/requests/", form);
+      await verifyService.submit(form);
       setSent(true);
       await fresh();
     } catch (error) {
@@ -231,7 +231,7 @@ export function VerifyView() {
     if (withdrawing) return;
     setWithdrawing(true);
     try {
-      await api.post("/verify/requests/withdraw/");
+      await verifyService.withdraw();
       setSent(false);
       await fresh();
     } catch (error) {

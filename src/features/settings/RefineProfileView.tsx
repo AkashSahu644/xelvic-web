@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Camera, Hourglass, Image as ImageIcon, ImagePlus, Lock, Trash2 } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { AuthedImage } from "@/components/Media";
-import { Modal } from "@/components/Modal";
+import { Avatar } from "@/components/ui/Avatar";
+import { AuthedImage } from "@/components/media/Media";
+import { Modal } from "@/components/overlays/Modal";
 import { FieldLabel, SettingsShell } from "@/features/settings/parts";
-import { api } from "@/lib/api";
-import { errorMessage } from "@/lib/errors";
-import { cn } from "@/lib/cn";
-import { useAuth } from "@/providers/AuthProvider";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import { useToast } from "@/providers/ToastProvider";
+import { errorMessage } from "@/utils/errors";
+import { cn } from "@/utils/cn";
+import { useAuth } from "@/hooks/useAuth";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useToast } from "@/hooks/useToast";
+import { authService } from "@/services/auth.service";
 import type { Me } from "@/types/api";
 
 /**
@@ -124,10 +124,7 @@ export function RefineProfileView({ onBack }: { onBack: () => void }) {
     }
     setPasswordBusy(true);
     try {
-      await api.post("/auth/password/change/", {
-        current_password: currentPassword,
-        password: newPassword,
-      });
+      await authService.changePassword(currentPassword, newPassword);
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
@@ -200,7 +197,7 @@ export function RefineProfileView({ onBack }: { onBack: () => void }) {
     try {
       const form = new FormData();
       form.append(kind, file);
-      const me = await api.form<Me>(`/auth/me/${kind}/`, form);
+      const me = await authService.uploadImage(kind, form);
       updateUser(me);
       toast({
         title: t(kind === "avatar" ? "Photo changed." : "Cover changed."),
@@ -220,7 +217,7 @@ export function RefineProfileView({ onBack }: { onBack: () => void }) {
     setRemoveAsk(null);
     setUploading(kind);
     try {
-      const me = await api.delete<Me>(`/auth/me/${kind}/`);
+      const me = await authService.removeImage(kind);
       updateUser(me);
       toast({
         title: t(kind === "avatar" ? "Photo removed." : "Cover removed."),
@@ -257,7 +254,7 @@ export function RefineProfileView({ onBack }: { onBack: () => void }) {
     }
     setSaving(true);
     try {
-      const me = await api.patch<Me>("/auth/me/", {
+      const me = await authService.updateMe({
         name: name.trim(),
         username: handle,
         bio: era.trim(),

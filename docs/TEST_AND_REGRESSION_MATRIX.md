@@ -2,6 +2,13 @@
 
 Date: 2026-10-24
 
+**Superseded as a snapshot, and kept as one.** The dates, counts and build sizes
+below are what was run on 2026-10-24, when the suite was five theme tests and the
+client was one `src/App.tsx`. Both have moved a long way since; the live record
+is `XELVIC_TESTING_REPORT.md` (per-pass checks, most recently 80 cases over 12
+files) and `XELVIC_PROGRESS_TRACKER.md`. Nothing in this file has been re-run to
+match them, and a number here should not be quoted as current.
+
 ## Stable test and requirement trace
 
 | Test ID | Requirement IDs | Verification | Result / status |

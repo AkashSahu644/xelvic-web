@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import {
   ArrowRight,
   BarChart3,
@@ -16,34 +16,46 @@ import {
   StickyNote,
   Users,
 } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Button } from "@/components/Button";
-import { AuthedImage } from "@/components/Media";
-import { Modal } from "@/components/Modal";
-import { PageHeader } from "@/components/Page";
-import { EmptyState, ErrorState } from "@/components/States";
-import { VerifiedTick } from "@/components/Tick";
+import { Avatar } from "@/components/ui/Avatar";
+import { Button } from "@/components/ui/Button";
+import { AuthedImage } from "@/components/media/Media";
+import { Modal } from "@/components/overlays/Modal";
+import { PageHeader } from "@/components/layout/Page";
+import { EmptyState, ErrorState } from "@/components/ui/States";
+import { VerifiedTick } from "@/components/icons/Tick";
 import { DropCard } from "@/features/drops/DropCard";
 import { DropComposer, type ComposerMode } from "@/features/drops/DropComposer";
 import { EditDrop } from "@/features/drops/EditDrop";
 import { SensitiveVeil } from "@/features/drops/SensitiveVeil";
 import { VibeViewer } from "@/features/drops/VibeViewer";
-import { api, apiPathFrom } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { count, timeAgoShort } from "@/lib/format";
-import { useTheme } from "@/providers/ThemeProvider";
-import type { Drop, Page, ThreadCard } from "@/types/api";
+import { dropsFeedQuery, dropsVibesQuery } from "@/features/drops/feedQueries";
+import {
+  FEED_VIBE_SHARE_FALLBACK,
+  filledWithVibes,
+  mixedFeed,
+  railClips,
+  shelfOrder,
+  walkOf,
+} from "@/features/drops/mix";
+import { dropIsClip } from "@/features/drops/model";
+import { chatService } from "@/services/chat.service";
+import { socialService } from "@/services/social.service";
+import { cn } from "@/utils/cn";
+import { count, timeAgoShort } from "@/utils/format";
+import { useTheme } from "@/hooks/useTheme";
+import { useWideScreen } from "@/hooks/useWideScreen";
+import type { Drop, Page } from "@/types/api";
 
 function Aside() {
   const { design } = useTheme();
   const threads = useQuery({
     queryKey: ["threads-aside"],
-    queryFn: () => api.get<{ threads: ThreadCard[] }>("/chat/threads/"),
+    queryFn: () => chatService.threads(),
     staleTime: 20_000,
   });
   const requests = useQuery({
     queryKey: ["requests-count"],
-    queryFn: () => api.get<{ pending: number }>("/social/requests/count/"),
+    queryFn: () => socialService.requestCount(),
     retry: false,
   });
   const recent = threads.data?.threads?.slice(0, 4) ?? [];
@@ -159,6 +171,7 @@ function Aside() {
   );
 }
 
+
 function SearchIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="size-3" aria-hidden>
@@ -217,10 +230,10 @@ function Pill({ icon, text }: { icon: ReactNode; text: string }) {
  * corner, how many have watched, and the name under it — `VibeCard` in
  * `screens/drops.dart`.
  *
- * The tile is 89×132, three points bigger than the Moments rail's own tile in
- * both directions: the same card in the same kind of row, given a touch more
- * presence because it sits inside a page that scrolls the other way. The face
- * is in the top corner at 3 and the watchers at the foot at 5, and the two are
+ * The tile is 96×144, three points bigger than the Moments rail's own tile in
+ * both directions and a touch taller again, so it holds its own beside a feed
+ * column narrowed to a post's width. The face is in the top corner at 2 and the
+ * watchers at the foot at 2, and the two are
  * the only things over the frame — a Vibe is watched, and how often is half of
  * what somebody scanning a rail is deciding between.
  *
@@ -239,13 +252,13 @@ function VibeCard({ vibe, onOpen }: { vibe: Drop; onOpen: () => void }) {
     <button
       type="button"
       onClick={onOpen}
-      className="group w-[89px] shrink-0 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+      className="group w-[96px] shrink-0 snap-start text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       aria-label={`${vibe.author.name || vibe.author.username}'s Vibe, ${count(vibe.views ?? 0)} views`}
     >
       {/* The tile is the picture and nothing else, so the cover is the whole of
           it: the veil is handed the clip's own thumbnail to blur behind its
           panel rather than a frame of the clip, because a rail is scanned. */}
-      <span className="relative block h-[132px] w-[89px] overflow-hidden rounded-[14px] bg-[color-mix(in_srgb,var(--accent)_10%,var(--card))]">
+      <span className="relative block h-[144px] w-[96px] overflow-hidden rounded-[16px] bg-[color-mix(in_srgb,var(--accent)_10%,var(--card))] ring-1 ring-[color-mix(in_srgb,var(--ink)_8%,transparent)] transition duration-200 group-hover:-translate-y-0.5 group-hover:shadow-[0_10px_24px_rgb(19_19_26_/_0.12)] group-focus-visible:ring-2 group-focus-visible:ring-accent">
         <SensitiveVeil
           sensitive={Boolean(vibe.sensitive)}
           openable={Boolean(vibe.openable)}
@@ -269,24 +282,24 @@ function VibeCard({ vibe, onOpen }: { vibe: Drop; onOpen: () => void }) {
           )}
         </SensitiveVeil>
 
-        <span className="absolute start-[3px] top-[3px] rounded-full bg-card p-[1.5px]">
-          <Avatar user={vibe.author} size={26} />
+        <span className="absolute start-2 top-2 rounded-full bg-card p-[2px] shadow-[0_2px_8px_rgb(8_8_12_/_0.18)]">
+          <Avatar user={vibe.author} size={28} />
         </span>
-        <span className="absolute bottom-[5px] start-[5px]">
+        <span className="absolute bottom-2 start-2">
           <Pill icon={<Play className="size-3 fill-current" aria-hidden />} text={count(vibe.views ?? 0)} />
         </span>
-        {/* The other names, as a count and nothing more: the tile is 89 wide
+        {/* The other names, as a count and nothing more: the tile is 96 wide
             and a name on the same line would be an ellipsis. The word for it
             is on the card this opens. */}
         {others > 1 ? (
-          <span className="absolute bottom-[5px] end-[5px]">
+          <span className="absolute bottom-2 end-2">
             <Pill icon={<Users className="size-3" aria-hidden />} text={count(others)} />
           </span>
         ) : null}
       </span>
-      <span className="mt-[6px] flex items-center gap-[2px]">
-        <span className="truncate text-[11.5px] text-ink">{firstName}</span>
-        {vibe.author.verified ? <VerifiedTick size={11} /> : null}
+      <span className="mt-2 flex w-[96px] items-center gap-1">
+        <span className="truncate text-[12px] font-semibold text-ink">{firstName}</span>
+        {vibe.author.verified ? <VerifiedTick size={12} /> : null}
       </span>
     </button>
   );
@@ -323,6 +336,7 @@ function CreateRow({
 export function DropsPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const wide = useWideScreen();
   const [params, setParams] = useSearchParams();
   const [createOpen, setCreateOpen] = useState(false);
   const [vibeIndex, setVibeIndex] = useState<number | null>(null);
@@ -333,29 +347,92 @@ export function DropsPage() {
       ? modeParam
       : "drop";
 
-  const feed = useInfiniteQuery({
-    queryKey: ["drops", "feed"],
-    queryFn: ({ pageParam }) => api.get<Page<Drop>>(pageParam ?? "/drops/"),
-    initialPageParam: "/drops/",
-    getNextPageParam: (last) => apiPathFrom(last.next),
-  });
+  // Both shelves' options live in `features/drops/feedQueries.ts` because this
+  // page is not their only reader: the prefetcher warms them by the same
+  // object. Stated here as well, they disagreed — see that file.
+  const feed = useInfiniteQuery(dropsFeedQuery);
 
-  // The shelf is dealt a page at a time and the walk keeps asking while it is
-  // being read — `Drops.vibeBatch` ahead, in the app. The first page is a
-  // hand of thirty and the walk is not supposed to end there: a thumb with
-  // nothing after it is the app's own complaint about a shelf that stopped.
-  const vibes = useInfiniteQuery({
-    queryKey: ["drops", "vibes"],
-    queryFn: ({ pageParam }) => api.get<Page<Drop>>(pageParam),
-    initialPageParam: "/drops/vibes/",
-    getNextPageParam: (last) => apiPathFrom(last.next),
-    staleTime: 30_000,
-  });
-  const vibeRows = useMemo(
-    () => (vibes.data?.pages ?? []).flatMap((page) => page.results),
-    [vibes.data],
-  );
+  const vibes = useInfiniteQuery(dropsVibesQuery);
+  const vibeRows = useMemo(() => {
+    // A hand dealt twice is one clip, not two tiles with the same key. The
+    // server deals one shelf the first time and the walk asks for hands after
+    // that, so a clip can arrive in two of them — the app's `_fillMore` drops
+    // the second copy for the same reason.
+    const seen = new Set<string>();
+    return (vibes.data?.pages ?? [])
+      .flatMap((page) => page.results)
+      .filter((vibe) => {
+        if (seen.has(vibe.id)) return false;
+        seen.add(vibe.id);
+        return true;
+      });
+  }, [vibes.data]);
+
+  /**
+   * The salt the rail's order and the weave are drawn from.
+   *
+   * Drawn once per opening of the page, which is the app's promise kept to the
+   * letter it can keep here: the shelf is a *shuffled* order — see
+   * `shelfOrder` — so that the strip above the feed is not a second telling of
+   * the same order as the top of the page under it, and the order has to hold
+   * still while the page is open, because a card that moves as it is tapped is
+   * a card tapped wrongly. The app draws a fresh salt on every deal of the
+   * shelf; a browser cannot tell "a fresh deal" from "the same page re-read
+   * after a heart landed", and re-dealing on the second would be exactly the
+   * card that moves under the thumb.
+   */
+  const [salt] = useState(() => Math.floor(Math.random() * 0x80000000));
+
+  /** The shelf in its own order — the rail and the weave are both read from it. */
+  const shelf = useMemo(() => shelfOrder(vibeRows, salt), [vibeRows, salt]);
   const vibeParam = params.get("vibe");
+  /** Where a clip stands in the walk, which is the shelf's own order. */
+  const vibeAt = (id: unknown) => shelf.findIndex((vibe) => String(vibe.id) === String(id));
+
+  /**
+   * A clip the walk was opened on that the shelf has never held.
+   *
+   * A plain video in the feed is not a Vibe, so it is not on the shelf — and the
+   * app does not open it on a page of its own either (that was the report of
+   * 2026-10-19: *"agar drop sirf single video hai to click karne pe single
+   * screen pe ja raha, hata kar vibe pe play hona chahiye"*). It is handed to
+   * the walk's own head instead: see [walk].
+   */
+  const [walkLead, setWalkLead] = useState<Drop | null>(null);
+
+  /**
+   * What the walk walks: the shelf, in its own order, with a lead in front of
+   * it when the clip that was pressed is not one of the shelf's own.
+   *
+   * The app's `Drops.it.carry(one)`: *"a single video pressed in the feed is not
+   * on the shelf — it is not a Vibe — and a walk handed `[it, ...shelf]` is one
+   * this screen may not lengthen"*, so the phone gives it to the store's tail
+   * and opens on it. Here the lead sits at the head of the list the walk is
+   * handed, which is the same promise kept one simpler way: the clip under the
+   * thumb is where the walk opens, the shelf is a swipe from it, and the hand
+   * the walk asks for at the end is asked for by the page as it always was —
+   * `onNeedMore` — so the walk still does not run out.
+   */
+  const walk = useMemo(() => walkOf(shelf, walkLead), [shelf, walkLead]);
+
+  /**
+   * Open the walk on a clip — a tile on the strip, a card in the feed, or a
+   * plain video a card is playing.
+   *
+   * A clip the shelf no longer holds is not opened at nought: the walk would
+   * then start on somebody else's clip, which is a different thing from the one
+   * that was pressed. It is carried in front of the shelf instead. See [walk].
+   */
+  function openVibe(one: Drop) {
+    const at = vibeAt(one.id);
+    if (at >= 0) {
+      setWalkLead(null);
+      setVibeIndex(at);
+      return;
+    }
+    setWalkLead(one);
+    setVibeIndex(0);
+  }
   // A card's ⋮ offers Update on its own author's post, and the app opens its
   // composer in edit mode with that post loaded. Here the post is already in
   // hand — it is the card that was tapped — so the modal takes it directly and
@@ -363,13 +440,18 @@ export function DropsPage() {
   const editId = params.get("edit");
 
   useEffect(() => {
-    if (!vibeParam || !vibeRows.length) return;
-    const index = vibeRows.findIndex((vibe) => String(vibe.id) === vibeParam);
+    if (!vibeParam || !shelf.length) return;
+    const index = shelf.findIndex((vibe) => String(vibe.id) === vibeParam);
     if (index >= 0) setVibeIndex(index);
-  }, [vibeParam, vibeRows]);
+  }, [vibeParam, shelf]);
 
   function closeVibe() {
     setVibeIndex(null);
+    // The lead goes with it. A clip carried in front of the shelf belongs to the
+    // walk it was carried into, not to the page: opening the strip's own first
+    // tile afterwards has to open on that tile rather than on the video somebody
+    // pressed ten minutes ago. See [walk].
+    setWalkLead(null);
     setParams((current) => {
       const copy = new URLSearchParams(current);
       copy.delete("vibe");
@@ -387,6 +469,134 @@ export function DropsPage() {
         return true;
       });
   }, [feed.data]);
+
+  // An empty first page is two answers and the server says which: a corpus
+  // with nothing in it, or a corpus this reader has finished. The app draws
+  // "Nothing here yet" for the first and "You've seen the whole feed" for the
+  // second, and a page that said the first over the second is telling somebody
+  // nobody posts rather than that they have read everything.
+  const caughtUp = feed.data?.pages?.[0]?.caught_up === true;
+
+  /**
+   * How many of this page's cards the server says should be clips.
+   *
+   * Read off the page rather than asked for on its own: the number is a
+   * property of this reader and changes with them, and a second request for a
+   * float would be a request on the hot path for something the feed's own
+   * answer can carry in four bytes. The fallback is the app's — the share a
+   * reader with no history is shown — and it stands only until a page arrives
+   * carrying one.
+   */
+  const share = feed.data?.pages?.[0]?.vibe_share ?? FEED_VIBE_SHARE_FALLBACK;
+
+  // An exhausted feed is not a sentence about having read everything: it is
+  // wherever the shelf is still holding past the rail. See `filledWithVibes`.
+  const filling = caughtUp && !drops.length;
+  const filled = useMemo(() => (filling ? filledWithVibes(shelf) : []), [filling, shelf]);
+
+  /**
+   * The feed as it is drawn: the drops the server dealt, with clips woven in.
+   *
+   * The app's `Drops.mixed`, and the same arithmetic — see `features/drops/
+   * mix.ts`, which is that file carried over whole. It is a *view*: `drops`
+   * stays the server's own page in the server's own order, because the next
+   * page's cursor counts on it.
+   */
+  const woven = useMemo(
+    () =>
+      filled.length
+        ? filled
+        : mixedFeed({ drops, vibes: shelf, share, salt }),
+    [filled, drops, shelf, share, salt],
+  );
+
+  /**
+   * The rail: the shelf, less the clips the feed is drawing at its head.
+   *
+   * The rule and the one place it is read narrower than the app reads it are in
+   * `railClips`, beside the owner's own report of what the app's reading did
+   * here — *"for you ke upar jo vibes ka section tha wo bhi hat gya hai, please
+   * use rakhiye"* (2026-11-06) — because it is arithmetic over two lists and it
+   * is worth testing as such. See `mix.test.ts`.
+   */
+  const rail = useMemo(
+    () => railClips({ shelf, woven, filling }),
+    [filling, shelf, woven],
+  );
+
+  /**
+   * The next page, asked for as the foot of the feed comes into view.
+   *
+   * The app's `Drops._more` fetches when the scroll is 400 points from the
+   * bottom; a sentinel with the same job says the same thing in a browser, and
+   * the wider margin is there because a feed is read by flicking — the page is
+   * wanted before the thumb reaches the end of the one in hand, not after.
+   *
+   * This replaced a "Load more" button. The button was honest and it was not
+   * the app: a feed does not stop to ask, and a reader who has to press for
+   * every page is a reader who sees ten drops and leaves.
+   */
+  const foot = useRef<HTMLDivElement | null>(null);
+  // Which shelf the foot is asking. A feed with nothing left in it is drawn
+  // from the shelf's own tail — see `filledWithVibes` — and the thing the foot
+  // wants then is the next hand of clips, not a page of drops that has already
+  // been read to its end.
+  const more = filling ? vibes : feed;
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = more;
+  useEffect(() => {
+    const node = foot.current;
+    if (!node || !hasNextPage || isFetchingNextPage) return;
+    const watcher = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        void fetchNextPage();
+      },
+      // Two thousand pixels is roughly three cards of lead. The first byte
+      // from this server takes hundreds of milliseconds, so a margin measured
+      // in one screen arrived with the reader already at the foot — and the
+      // foot is where the spinner was. The fetch now starts while there is
+      // still something left to read.
+      { rootMargin: "2000px 0px" },
+    );
+    watcher.observe(node);
+    return () => watcher.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage, woven.length]);
+
+  /**
+   * A card is gone from this page — hidden, or taken down by its author.
+   *
+   * Taken out of the pages in hand rather than re-asked for. Invalidating
+   * `["drops"]` re-fetched every page the reader had scrolled to — ten of them
+   * after ten screens — to learn that one card is gone. The server has already
+   * been told by the menu that hid it; the page just stops drawing it.
+   *
+   * *Both* shelves are swept, because one clip can be a card in the feed and a
+   * tile on the strip above it: a sweep that reached only the feed would leave
+   * the tile drawing a clip the reader has just taken down, and a sweep that
+   * reached only the shelf would leave the card.
+   */
+  function forget(id: string) {
+    const sweep = (
+      old: InfiniteData<Page<Drop>, string | undefined> | undefined,
+    ) =>
+      old
+        ? {
+            ...old,
+            pages: old.pages.map((page) => ({
+              ...page,
+              results: page.results.filter((row) => String(row.id) !== id),
+            })),
+          }
+        : old;
+    queryClient.setQueryData<InfiniteData<Page<Drop>, string | undefined>>(
+      dropsFeedQuery.queryKey,
+      sweep,
+    );
+    queryClient.setQueryData<InfiniteData<Page<Drop>, string | undefined>>(
+      dropsVibesQuery.queryKey,
+      sweep,
+    );
+  }
 
   function openComposer(mode: ComposerMode = "drop") {
     setParams((current) => {
@@ -430,14 +640,41 @@ export function DropsPage() {
         }
       />
 
-      <div className="mx-auto grid w-full max-w-[1240px] gap-6 px-3 pt-1 sm:px-4 md:px-7 xl:grid-cols-[minmax(0,660px)_300px] xl:justify-center xl:gap-8">
-        <div className="min-w-0 space-y-3">
-          {vibeRows.length ? (
-            <section aria-labelledby="drops-vibe-heading">
-              <SectionHead id="drops-vibe-heading" title="Vibe" action="See all" onAction={() => setVibeIndex(0)} />
-              <div className="no-scrollbar flex gap-3 overflow-x-auto px-4 pb-1">
-                {vibeRows.map((vibe, index) => (
-                  <VibeCard key={vibe.id} vibe={vibe} onOpen={() => setVibeIndex(index)} />
+      {/* A feed is a column, not a page. The grid below this breakpoint was one
+          column the whole width of the window, so a card on a 1440-point screen
+          was drawn the whole width of the window with a picture inside it that had narrowed
+          itself to a third of that — the owner's report of 2026-11-06, *"width
+          bahut jyada hai"*, beside a photograph of exactly that card. The feed
+          is capped at a post's own width, so the same
+          card is the same card at every size. A post is read at 390 points on
+          the phone this is a port of, and 470 points is the closest thing to it
+          on a desktop. */}
+      <div className="mx-auto grid w-full max-w-[860px] gap-6 px-3 pt-1 sm:px-4 md:px-7 xl:grid-cols-[minmax(0,470px)_300px] xl:justify-center xl:gap-8">
+        <div className="mx-auto w-full min-w-0 max-w-[470px] space-y-3">
+          {rail.length ? (
+            <section
+              aria-labelledby="drops-vibe-heading"
+              className="overflow-hidden rounded-[20px] border border-line bg-card shadow-[0_8px_24px_rgb(19_19_26_/_0.04)]"
+            >
+              <SectionHead
+                id="drops-vibe-heading"
+                title="Vibe"
+                // Both or neither: a `SectionHead` draws the button when it is
+                // given a word, and a word with no handler is a button that does
+                // nothing.
+                action={rail[0] ? "See all" : undefined}
+                onAction={rail[0] ? () => openVibe(rail[0]) : undefined}
+              />
+              <div className="no-scrollbar flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-px-4 px-4 pb-4">
+                {/* A row and not the whole shelf: the walk is where clips are
+                    watched, and the hands it asks for as the thumb reaches
+                    them would otherwise grow this rail without end — a dozen
+                    tiles whose pictures nobody has scrolled to yet. A tile
+                    opens the walk at its place *in the shelf*, which is not its
+                    place on the strip: the strip is the shelf less the clips
+                    the feed below is already drawing. */}
+                {rail.map((vibe) => (
+                  <VibeCard key={vibe.id} vibe={vibe} onOpen={() => openVibe(vibe)} />
                 ))}
               </div>
             </section>
@@ -468,12 +705,16 @@ export function DropsPage() {
               <div className="card">
                 <ErrorState error={feed.error} onRetry={() => void feed.refetch()} />
               </div>
-            ) : drops.length === 0 ? (
+            ) : woven.length === 0 ? (
               <div className="card">
                 <EmptyState
-                  icon={<Users className="size-6" />}
-                  title="Nothing here yet"
-                  body="Drops from people you follow turn up here."
+                  icon={<Sparkles className="size-6" />}
+                  title={caughtUp ? "You've seen the whole feed" : "Nothing here yet"}
+                  body={
+                    caughtUp
+                      ? "New drops land here as people post them. Pull it up again later."
+                      : "Drops from people you follow turn up here."
+                  }
                   action={
                     <div className="flex gap-2">
                       <Link to="/app/search" className="btn btn-primary">Find people</Link>
@@ -484,18 +725,47 @@ export function DropsPage() {
               </div>
             ) : (
               <div className="space-y-3">
-                {drops.map((drop) => (
+                {woven.map((row) => (
+                  // Each card is its own box: a card below the fold is not laid
+                  // out or painted until the scroll nears it, which is what
+                  // keeps a fifty-drop feed's first paint as cheap as a five.
+                  <div key={row.id} className="feed-item">
                   <DropCard
-                    key={drop.id}
-                    drop={drop}
-                    onRemoved={() => void queryClient.invalidateQueries({ queryKey: ["drops"] })}
+                    drop={row}
+                    // A clip in the feed has somewhere to be opened, and it is
+                    // the same place whether it is a Vibe the weave wove in or a
+                    // plain video somebody posted: the walk. The app's own rule —
+                    // `DropVideo.onOpen` is `isVibe ? openVibe : _openFrame`, and
+                    // `_openFrame` is `openClip`, which is `openVibe`. The owner's
+                    // report of 2026-11-06 is that this was missing here: *"app me
+                    // drops ke for you post me video post par click karne par ek
+                    // dusare page me wo video open hota hai waise isme nahi ho
+                    // raha hai"*.
+                    //
+                    // A picture is still left alone, which is the app's answer
+                    // too: nothing on the phone happens on a tap on a still.
+                    onOpen={dropIsClip(row) ? () => openVibe(row) : undefined}
+                    onRemoved={forget}
                   />
+                  </div>
                 ))}
-                {feed.hasNextPage ? (
-                  <div className="flex justify-center py-3">
-                    <Button variant="secondary" size="sm" loading={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()}>
-                      Load more
-                    </Button>
+                {filling ? (
+                  vibes.hasNextPage ? (
+                    <div ref={foot} className="flex justify-center py-4">
+                      {vibes.isFetchingNextPage ? (
+                        <span className="size-5 animate-spin rounded-full border-2 border-accent border-t-transparent" aria-label="Loading more clips" />
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="flex items-center justify-center gap-1.5 py-5 text-center text-[10.5px] font-semibold text-dim">
+                      <Sparkles className="size-3.5 text-accent" /> That&apos;s everything for now
+                    </p>
+                  )
+                ) : feed.hasNextPage ? (
+                  <div ref={foot} className="flex justify-center py-4">
+                    {feed.isFetchingNextPage ? (
+                      <span className="size-5 animate-spin rounded-full border-2 border-accent border-t-transparent" aria-label="Loading more drops" />
+                    ) : null}
                   </div>
                 ) : (
                   <p className="flex items-center justify-center gap-1.5 py-5 text-center text-[10.5px] font-semibold text-dim">
@@ -506,7 +776,7 @@ export function DropsPage() {
             )}
           </section>
         </div>
-        <Aside />
+        {wide ? <Aside /> : null}
       </div>
 
       <Modal
@@ -575,7 +845,15 @@ export function DropsPage() {
       </Modal>
 
       <EditDrop
-        drop={editId ? drops.find((row) => String(row.id) === editId) ?? null : null}
+        // Both shelves, because a post's Update row is reachable from a card of
+        // either kind and a clip is not in the feed's own pages.
+        drop={
+          editId
+            ? drops.find((row) => String(row.id) === editId) ??
+              shelf.find((row) => String(row.id) === editId) ??
+              null
+            : null
+        }
         dropId={editId ?? undefined}
         open={Boolean(editId)}
         onClose={() => {
@@ -603,10 +881,13 @@ export function DropsPage() {
         }}
       />
 
-      {vibeIndex !== null && vibeRows.length ? (
+      {vibeIndex !== null && walk.length ? (
         <VibeViewer
-          vibes={vibeRows}
-          index={Math.min(vibeIndex, vibeRows.length - 1)}
+          // `walk` and not `shelf`: a plain video pressed in the feed is not a
+          // Vibe, so it is in front of the shelf rather than on it — and opening
+          // it is what the owner reported missing on 2026-11-06. See [walk].
+          vibes={walk}
+          index={Math.min(vibeIndex, walk.length - 1)}
           onIndex={setVibeIndex}
           onClose={closeVibe}
           // A thumb nearing the end of the hand it was dealt asks for the next

@@ -127,11 +127,17 @@ Response for relation actions includes `{user, relation, gate, cta}`.
 ## Audio
 
 `GET /audio/` -> `{hero, hero_source, recent, recent_source, playlists, podcasts, artists}`.
-`GET /audio/tracks/` (`?q=&category=&artist=`), `/tracks/{id}/`, `/tracks/{id}/stream/`, `/related/`,
+`GET /audio/tracks/` (`?source=catalogue|drop&q=&kind=&artist=&limit=`), `/tracks/{id}/`, `/tracks/{id}/stream/`, `/related/`,
 `POST /tracks/{id}/like/`, `/play/`, `GET /audio/board/`, `/audio/categories/`,
 `/audio/felt/`, `/audio/trending/`, playlists CRUD + items + order + share.
 
-`TrackRow`: `id, kind, title, artist, artist_slug, series, episode, seconds, plays, seed, liked` + stream/cover URLs where provided.
+`source` picks the shelf and there are two: `drop` is the uploads
+(`sound_row` of a `Drop`, `limit` capped at 100, default 60) and **omitting it
+keeps the shipped catalogue** (`limit` capped at 500, default 200). Asking for
+neither picks the catalogue, which is what the picker that lays a sound under a
+picture must not do — see `app/lib/screens/audio_picker.dart`.
+
+`TrackRow`: `id, kind, title, artist, artist_slug, artist_id, artist_avatar, series, episode, seconds, plays, seed, liked, source` + stream/cover URLs where provided.
 
 ## Spaces
 

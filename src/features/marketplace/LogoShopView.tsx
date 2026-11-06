@@ -29,14 +29,14 @@
 
 import { useState } from "react";
 import { Zap } from "lucide-react";
-import { Modal } from "@/components/Modal";
-import { Spinner } from "@/components/Button";
-import { cn } from "@/lib/cn";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import { useToast } from "@/providers/ToastProvider";
+import { Modal } from "@/components/overlays/Modal";
+import { Spinner } from "@/components/ui/Button";
+import { cn } from "@/utils/cn";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useToast } from "@/hooks/useToast";
 import { count } from "@/theme/shop";
 import { logoPlateShelf, plateCanOpen, plateIsOpen, type LogoPlate } from "./model";
-import { useCatalogue, useMarket, useMarketWallet } from "./queries";
+import { useCatalogue, useMarket, useMarketWallet } from "@/hooks/useMarketplace";
 
 export function LogoShopView() {
   const { data: catalogue } = useCatalogue();

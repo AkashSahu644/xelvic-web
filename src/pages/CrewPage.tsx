@@ -2,16 +2,16 @@ import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Search, SearchX, UserMinus, Users, Bookmark, WifiOff, X } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Blank } from "@/components/Blank";
-import { ConfirmDialog } from "@/components/Modal";
-import { PageHeader } from "@/components/Page";
-import { VerifiedTick } from "@/components/Tick";
-import { api } from "@/lib/api";
-import { errorMessage } from "@/lib/errors";
-import { useAuth } from "@/providers/AuthProvider";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import { useToast } from "@/providers/ToastProvider";
+import { Avatar } from "@/components/ui/Avatar";
+import { Blank } from "@/components/ui/Blank";
+import { ConfirmDialog } from "@/components/overlays/Modal";
+import { PageHeader } from "@/components/layout/Page";
+import { VerifiedTick } from "@/components/icons/Tick";
+import { errorMessage } from "@/utils/errors";
+import { useAuth } from "@/hooks/useAuth";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useToast } from "@/hooks/useToast";
+import { socialService } from "@/services/social.service";
 import type { UserCard } from "@/types/api";
 
 /**
@@ -59,7 +59,7 @@ export function CrewPage() {
     // A bare list, which the endpoint answers with directly — it has no page to
     // it. Reading `results` here matched nothing in the app and left the list
     // permanently empty, which looks exactly like a person nobody keeps.
-    queryFn: () => api.get<UserCard[]>(`/social/users/${encodeURIComponent(username)}/crew/${which}/`) as Promise<UserCard[]>,
+    queryFn: () => socialService.crew(username, which),
     enabled: Boolean(username),
   });
 
@@ -97,7 +97,7 @@ export function CrewPage() {
     if (!removing || busy) return;
     setBusy(true);
     try {
-      await api.post(`/social/users/${removing.id}/remove/`, {});
+      await socialService.remove(removing.id);
       // The server has already done it and answered in the same breath, so what
       // follows is the cached copies keeping step rather than a guess — the same
       // `bumpCrewCount` the app makes, and the count on my own profile is asked

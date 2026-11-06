@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { Bell, Music2, Phone } from "lucide-react";
-import { useToast } from "@/providers/ToastProvider";
+import { useToast } from "@/hooks/useToast";
 import {
   usePreferences,
   type MessageSound,
   type Ringtone,
-} from "@/providers/PreferencesProvider";
+} from "@/hooks/usePreferences";
 import { ChoiceModal, SettingsRow, SettingsRows, SettingsSwitch } from "./parts";
 
 /**

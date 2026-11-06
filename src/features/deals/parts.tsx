@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import { CloudOff, RefreshCw } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { VerifiedTick } from "@/components/Tick";
-import { cn } from "@/lib/cn";
+import { Avatar } from "@/components/ui/Avatar";
+import { VerifiedTick } from "@/components/icons/Tick";
+import { cn } from "@/utils/cn";
 import type { DealStatus, DealUser } from "@/types/api";
 import { isClosed, statusWord } from "./model";
 
@@ -16,7 +16,7 @@ import { isClosed, statusWord } from "./model";
  */
 
 /** The verified tick. `verifiedTick(true)` — the one blue, whatever the theme. */
-export { VerifiedTick } from "@/components/Tick";
+export { VerifiedTick } from "@/components/icons/Tick";
 
 /**
  * The one-word state.

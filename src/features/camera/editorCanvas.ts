@@ -70,6 +70,62 @@ export async function loadLayerImages(layers: EditorLayer[]) {
   return images;
 }
 
+/**
+ * A finished picture: one frame, one document, one JPEG.
+ *
+ * Lifted out of `CameraCapture`'s own `composedFile` so that the second place a
+ * document is turned into bytes — the carried picture put up from the viewer,
+ * which is edited before it goes — draws it through exactly the same scene
+ * code the camera does. Two composers would be two answers to "what does this
+ * document look like", and the one on screen would be the wrong one.
+ *
+ * Null rather than a throw when the picture itself will not load: the caller
+ * already has something to fall back to (the file it started with), and a
+ * picture that cannot be decoded is not a reason to fail a post.
+ */
+export async function composeImage({
+  url,
+  doc,
+  aspect,
+  longEdge = 1440,
+  afterSource,
+}: {
+  url: string;
+  doc: EditorDoc;
+  /** The width over the height the frame is drawn at. */
+  aspect: number;
+  longEdge?: number;
+  /** The live camera's own markings, which the camera screen paints over it. */
+  afterSource?: SceneOptions["afterSource"];
+}): Promise<Blob | null> {
+  const image = new Image();
+  image.src = url;
+  try {
+    await image.decode();
+  } catch {
+    return null;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(aspect >= 1 ? longEdge : longEdge * aspect));
+  canvas.height = Math.max(1, Math.round(aspect >= 1 ? longEdge / aspect : longEdge));
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+
+  drawScene(context, {
+    source: image,
+    sourceWidth: image.naturalWidth,
+    sourceHeight: image.naturalHeight,
+    doc,
+    width: canvas.width,
+    height: canvas.height,
+    layerImages: await loadLayerImages(doc.layers),
+    afterSource,
+  });
+
+  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+}
+
 function resolveColor(value: string, list: readonly { key: string; value: string }[]) {
   if (value === "none") return null;
   if (/^(#|rgb|hsl)/.test(value)) return value;

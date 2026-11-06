@@ -21,15 +21,14 @@
 // design and row, and writes the result out as variables.
 
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
-import { api } from "@/lib/api";
+import { ThemeContext } from "@/context/theme";
+import { STORAGE_KEYS } from "@/constants/storage";
 import {
   designedThemes,
   type ShellPage,
@@ -45,9 +44,9 @@ import {
   paneMaterial,
   toneNamed,
 } from "@/theme/shelf";
-import { useAuth } from "@/providers/AuthProvider";
-import { useToast } from "@/providers/ToastProvider";
-import { useCatalogue } from "@/features/marketplace/queries";
+import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/useToast";
+import { useCatalogue } from "@/hooks/useMarketplace";
 import {
   designForKey,
   rowForKey,
@@ -57,7 +56,7 @@ import {
 } from "@/features/marketplace/model";
 import { convoColors, inkOn, type ConvoPalette } from "@/features/convo/skin";
 import type { CatalogueTheme, Crop } from "@/features/marketplace/types";
-import type { Me } from "@/types/api";
+import { authService } from "@/services/auth.service";
 
 export type ThemeMode = "light" | "dark" | "system";
 
@@ -80,7 +79,7 @@ export interface ScreenBackdrop {
   crop: Crop | null;
 }
 
-interface ThemeContextValue {
+export interface ThemeContextValue {
   /** The design the web is wearing, with the catalogue's row laid over it. */
   design: ThemeDesign;
   /**
@@ -152,10 +151,9 @@ interface ThemeContextValue {
   styled: StyledTheme;
 }
 
-const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-const THEME_KEY = "xelvic.theme";
-const MODE_KEY = "xelvic.mode";
+const THEME_KEY = STORAGE_KEYS.theme;
+const MODE_KEY = STORAGE_KEYS.mode;
 
 /** The app's own theme: the floor a build with nothing written down stands on. */
 const OWN = designedThemes[0];
@@ -429,7 +427,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       // How hard a shell page's picture is washed, and the colour a chat's is.
       "--scrim": String(palette.scrim),
       "--wall-scrim": String(WALL_SCRIM),
+      // The colour the inside of a chat leads with — `convoAccent()` in
+      // `app/lib/convo_theme.dart`: the theme's own `chatTint` where it named
+      // one, and the theme's accent otherwise. `--convo-accent-rgb` is the same
+      // colour in channels, for the places that mix it by hand.
       "--convo-accent": convoPalette.chatTint ?? palette.accent,
+      "--convo-accent-rgb": rgbChannels(convoPalette.chatTint ?? palette.accent),
       "--convo-bubble-wash": convo.convoBubbleWash,
       "--convo-bubble-edge": convo.convoBubbleEdge,
       "--convo-bubble-run": convo.convoBubbleRun,
@@ -470,7 +473,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         return true;
       }
       try {
-        const me = await api.patch<Me>("/auth/me/theme/", { theme: next.key });
+        const me = await authService.setTheme(next.key);
         updateUser(me);
         if (!options.silent) toast({ title: `${next.name} is on`, tone: "success" });
         return true;
@@ -648,8 +651,3 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
-export function useTheme() {
-  const context = useContext(ThemeContext);
-  if (!context) throw new Error("useTheme must be used inside ThemeProvider");
-  return context;
-}

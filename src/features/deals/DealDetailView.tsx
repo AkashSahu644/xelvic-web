@@ -13,13 +13,13 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { AuthedImage, AuthedVideo } from "@/components/Media";
-import { ConfirmDialog, Modal } from "@/components/Modal";
-import { PageHeader } from "@/components/Page";
-import { Spinner } from "@/components/Button";
-import { useToast } from "@/providers/ToastProvider";
-import { cn } from "@/lib/cn";
-import { ApiError } from "@/lib/errors";
+import { AuthedImage, AuthedVideo } from "@/components/media/Media";
+import { ConfirmDialog, Modal } from "@/components/overlays/Modal";
+import { PageHeader } from "@/components/layout/Page";
+import { Spinner } from "@/components/ui/Button";
+import { useToast } from "@/hooks/useToast";
+import { cn } from "@/utils/cn";
+import { ApiError } from "@/utils/errors";
 import type { Deal, DealAsset, DealEvent } from "@/types/api";
 import {
   ago,
@@ -40,8 +40,8 @@ import {
   declineDeal,
   deliverDeal,
   markDealPaid,
-  useDeal,
-} from "./queries";
+} from "@/store/deals";
+import { useDeal } from "@/hooks/useDeals";
 
 /**
  * One paid collaboration, opened in full.

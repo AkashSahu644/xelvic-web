@@ -17,15 +17,16 @@ import {
   Trash,
   UserRound,
 } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Modal, ConfirmDialog } from "@/components/Modal";
+import { Avatar } from "@/components/ui/Avatar";
+import { Modal, ConfirmDialog } from "@/components/overlays/Modal";
 import { SheetRow } from "@/features/profile/parts";
 import { ReportSheet } from "@/features/report/ReportSheet";
-import { api } from "@/lib/api";
-import { errorMessage } from "@/lib/errors";
-import { mediaBlob } from "@/lib/media";
-import { savedKindOf, useSaved } from "@/features/saved/store";
-import { useToast } from "@/providers/ToastProvider";
+import { errorMessage } from "@/utils/errors";
+import { mediaBlob } from "@/utils/mediaCache";
+import { useSaved } from "@/hooks/useSaved";
+import { savedKindOf } from "@/store/saved";
+import { useToast } from "@/hooks/useToast";
+import { dropsService } from "@/services/drops.service";
 import type { Drop } from "@/types/api";
 import { dropBase, dropIsSound, dropIsVibe } from "./model";
 
@@ -99,7 +100,7 @@ export function DropMenu({
   }
 
   const hide = useMutation({
-    mutationFn: () => api.post(`/${base}/${drop.id}/hide/`, { on: true }),
+    mutationFn: () => dropsService.hide(base, drop.id, true),
     onSuccess: () => {
       onRemoved?.();
       done("You will not be shown that again.");
@@ -108,19 +109,19 @@ export function DropMenu({
   });
 
   const mute = useMutation({
-    mutationFn: () => api.post(`/drops/mute/${drop.author.id}/`, {}),
+    mutationFn: () => dropsService.muteAuthor(drop.author.id),
     onSuccess: () => done(`Nothing more from ${name}.`),
     onError: failed,
   });
 
   const less = useMutation({
-    mutationFn: () => api.post(`/drops/formats/${encodeURIComponent(drop.format ?? "")}/mute/`, {}),
+    mutationFn: () => dropsService.muteFormat(drop.format ?? ""),
     onSuccess: () => done(`Fewer ${drop.format_label} from now on.`),
     onError: failed,
   });
 
   const trash = useMutation({
-    mutationFn: () => api.delete(`/${base}/${drop.id}/`),
+    mutationFn: () => dropsService.remove(base, drop.id),
     onSuccess: () => {
       onRemoved?.();
       done("Taken down.");
@@ -142,7 +143,7 @@ export function DropMenu({
     const next = !drop[field];
     setBusy(field);
     try {
-      await api.patch(`/${base}/${drop.id}/`, { [field]: next });
+      await dropsService.edit(base, drop.id, { [field]: next });
       void queryClient.invalidateQueries({ queryKey: ["drops"] });
       void queryClient.invalidateQueries({ queryKey: ["drop", drop.id] });
       onChanged?.();

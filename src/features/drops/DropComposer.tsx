@@ -13,16 +13,19 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Button } from "@/components/Button";
-import { Modal } from "@/components/Modal";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { errorMessage } from "@/lib/errors";
-import { uploadAsset } from "@/lib/upload";
-import { useAuth } from "@/providers/AuthProvider";
-import { useToast } from "@/providers/ToastProvider";
-import type { Asset, Drop, UserCard } from "@/types/api";
+import { Avatar } from "@/components/ui/Avatar";
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/overlays/Modal";
+import { cn } from "@/utils/cn";
+import { errorMessage } from "@/utils/errors";
+import { uploadAsset } from "@/utils/upload";
+import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/useToast";
+import { collabsService } from "@/services/collabs.service";
+import { circlesService } from "@/services/circles.service";
+import { dropsService } from "@/services/drops.service";
+import { socialService } from "@/services/social.service";
+import type { Asset, Drop, ID, UserCard } from "@/types/api";
 import { dropIsVibe } from "./model";
 
 /**
@@ -228,18 +231,39 @@ export function DropComposer({
   mode = "drop",
   onClose,
   onCreated,
+  circle,
+  answer,
 }: {
   open: boolean;
   mode?: ComposerMode;
   onClose: () => void;
   onCreated?: (drop: Drop) => void;
+  /**
+   * The circle this is the answer to, when it is one — `DropPostScreen(circle:)`
+   * on the phone. A circle's post is an ordinary drop and goes up through the
+   * same body; only the road differs: `POST /circles/{id}/` instead of
+   * `POST /drops/`, whose server-side mapping is the same `write_fields`.
+   */
+  circle?: ID;
+  /**
+   * The shape today's task asked for — `CircleTask.kind`.
+   *
+   * It is the *shape* of the answer and not a genre, so it decides which door
+   * this opens on rather than which interest is being answered: `text` takes
+   * the media doors away, `sound` opens the audio door, `clip` holds the file
+   * picker to video and `picture` to images. A fifth shape is a server change
+   * and not a release.
+   */
+  answer?: string;
 }) {
   const { user } = useAuth();
   const { toast } = useToast();
+  const answering = Boolean(circle);
   const vibe = mode === "vibe";
   const poll = mode === "poll";
-  const sound = mode === "sound";
-  const note = mode === "note";
+  const sound = mode === "sound" || (answering && answer === "sound");
+  const note = mode === "note" || (answering && answer === "text");
+  const wantsClip = answering && answer === "clip";
   const [body, setBody] = useState("");
   // A drop's pictures, in the order they were chosen — the first is the card's
   // own face and the rest page behind it. A sound's cover and a picture's
@@ -373,7 +397,7 @@ export function DropComposer({
   async function invite(made: Drop) {
     if (!crew.length) return;
     try {
-      await api.post("/collabs/", {
+      await collabsService.create({
         // The route takes the post's kind as the key and its id as the value:
         // one post is named once, and a body naming both would be a body that
         // does not know what it is about.
@@ -392,6 +416,22 @@ export function DropComposer({
     }
   }
 
+  /**
+   * Put the post up — through the circle when this is an answer to one.
+   *
+   * The road is the only difference. `POST /circles/{id}/` runs the same
+   * `write_fields` the feed's own POST does, so the body is this composer's own
+   * either way and nothing here is a circles-only shape.
+   */
+  async function put(payload: Record<string, unknown>): Promise<Drop> {
+    if (circle) {
+      const posted = await circlesService.post(circle, payload);
+      return posted.drop;
+    }
+    const response = await dropsService.create("drops", payload);
+    return response.drop!;
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
@@ -402,6 +442,10 @@ export function DropComposer({
 
     if (vibe && !clip) {
       setError("Choose a clip for your Vibe first.");
+      return;
+    }
+    if (wantsClip && !clip) {
+      setError("Today's task asks for a clip. Choose one first.");
       return;
     }
     if (sound && !audio) {
@@ -430,11 +474,14 @@ export function DropComposer({
         setError("Write something first.");
         return;
       }
+    } else if (wantsClip) {
+      // The clip is the answer. Whatever is in the box is a caption on it, so
+      // the drop's own rule — words or a picture — is already satisfied.
     } else if (!vibe && !sound && !text && !pictures.length) {
       setError("Write something or add a picture first.");
       return;
     }
-    if (!vibe && !sound && !poll && pollOn && lines.length < 2) {
+    if (!vibe && !sound && !poll && !answering && pollOn && lines.length < 2) {
       setError("A poll needs at least two answers.");
       return;
     }
@@ -450,11 +497,30 @@ export function DropComposer({
         if (music.trim()) payload.music = music.trim();
         if (tagged.length) payload.mentions = tagged.map((person) => person.id);
         if (sensitive) payload.sensitive = true;
-        const response = await api.post<{ vibe: Drop }>("/drops/vibes/", payload);
-        await invite(response.vibe);
+        const response = await dropsService.create("drops/vibes", payload);
+        await invite(response.vibe!);
         toast({ title: "Vibe posted", tone: "success" });
         reset();
-        onCreated?.(response.vibe);
+        onCreated?.(response.vibe!);
+        onClose();
+        return;
+      }
+
+      // A clip answer is the one shape that is neither a plain drop nor a Vibe
+      // on the wire: one video upload, the words as its caption, and no
+      // gallery — the task asked for a clip, not for a clip and some pictures.
+      if (wantsClip) {
+        if (!clip) return;
+        const asset = await uploadAsset(clip, { kind: "video" });
+        const payload: Record<string, unknown> = { body: text, asset: asset.id };
+        if (tagged.length) payload.mentions = tagged.map((person) => person.id);
+        if (sensitive) payload.sensitive = true;
+        setStage("Posting...");
+        const made = await put(payload);
+        await invite(made);
+        toast({ title: "Your take is up.", tone: "success" });
+        reset();
+        onCreated?.(made);
         onClose();
         return;
       }
@@ -476,11 +542,11 @@ export function DropComposer({
         if (coverId) payload.cover = coverId;
         if (tagged.length) payload.mentions = tagged.map((person) => person.id);
         if (sensitive) payload.sensitive = true;
-        const response = await api.post<{ drop: Drop }>("/drops/", payload);
-        await invite(response.drop);
-        toast({ title: "Sound posted", tone: "success" });
+        const made = await put(payload);
+        await invite(made);
+        toast({ title: answering ? "Your take is up." : "Sound posted", tone: "success" });
         reset();
-        onCreated?.(response.drop);
+        onCreated?.(made);
         onClose();
         return;
       }
@@ -543,11 +609,14 @@ export function DropComposer({
       if (pollBody) payload.poll = pollBody;
 
       setStage("Posting…");
-      const response = await api.post<{ drop: Drop }>("/drops/", payload);
-      await invite(response.drop);
-      toast({ title: poll ? "Poll posted" : "Drop posted", tone: "success" });
+      const made = await put(payload);
+      await invite(made);
+      toast({
+        title: answering ? "Your take is up." : poll ? "Poll posted" : "Drop posted",
+        tone: "success",
+      });
       reset();
-      onCreated?.(response.drop);
+      onCreated?.(made);
       onClose();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -557,18 +626,50 @@ export function DropComposer({
     }
   }
 
-  const heading = vibe ? "New Vibe" : poll ? "New poll" : sound ? "New sound" : note ? "New note" : "New drop";
-  const blurb = vibe
-    ? "A short clip for the shelf."
-    : poll
-      ? "Ask the room."
+  // "Your take" is the app's own name for this screen — `Str.dropsYourTake`.
+  // The task's sentence is already on the circle it was opened from, so a
+  // heading repeating it would be the same words twice.
+  const heading = answering
+    ? "Your take"
+    : vibe
+      ? "New Vibe"
+      : poll
+        ? "New poll"
+        : sound
+          ? "New sound"
+          : note
+            ? "New note"
+            : "New drop";
+  const blurb = answering
+    ? "An answer to today's task."
+    : vibe
+      ? "A short clip for the shelf."
+      : poll
+        ? "Ask the room."
+        : sound
+          ? "A recording, on its own shelf."
+          : note
+            ? "Words and nothing else."
+            : "Say it, show it, or ask the room.";
+  const posting = answering
+    ? "Posting your take"
+    : vibe
+      ? "Posting a Vibe"
+      : poll
+        ? "Posting a poll"
+        : sound
+          ? "Posting a sound"
+          : note
+            ? "Posting a note"
+            : "Posting to your drops";
+  const ready =
+    vibe || wantsClip
+      ? Boolean(clip)
       : sound
-        ? "A recording, on its own shelf."
-        : note
-          ? "Words and nothing else."
-          : "Say it, show it, or ask the room.";
-  const posting = vibe ? "Posting a Vibe" : poll ? "Posting a poll" : sound ? "Posting a sound" : note ? "Posting a note" : "Posting to your drops";
-  const ready = vibe ? Boolean(clip) : sound ? Boolean(audio) : poll || note ? body.trim().length > 0 : Boolean(body.trim() || pictures.length);
+        ? Boolean(audio)
+        : poll || note
+          ? body.trim().length > 0
+          : Boolean(body.trim() || pictures.length);
 
   return (
     <Modal
@@ -591,7 +692,15 @@ export function DropComposer({
               loading={busy}
               disabled={!ready}
             >
-              {vibe || sound ? "Put it up" : poll ? "Post poll" : note ? "Post note" : "Post drop"}
+              {answering
+                ? "Drop it"
+                : vibe || sound
+                  ? "Put it up"
+                  : poll
+                    ? "Post poll"
+                    : note
+                      ? "Post note"
+                      : "Post drop"}
             </Button>
           </div>
         </div>
@@ -628,7 +737,7 @@ export function DropComposer({
           />
         </label>
 
-        {vibe ? (
+        {vibe || wantsClip ? (
           clipUrl ? (
             <div className="relative overflow-hidden rounded-[14px] border border-line bg-black">
               <video src={clipUrl} controls playsInline muted className="mx-auto max-h-[380px] w-full object-contain" />
@@ -861,7 +970,7 @@ export function DropComposer({
         ) : null}
 
         <div className="flex flex-wrap items-center gap-1.5">
-          {vibe ? (
+          {vibe || wantsClip ? (
             <label className="chip cursor-pointer">
               <Clapperboard className="size-3.5" />
               {clip ? "Replace clip" : "Clip"}
@@ -876,7 +985,7 @@ export function DropComposer({
               />
             </label>
           ) : null}
-          {!vibe && !sound && !note ? (
+          {!vibe && !sound && !note && !wantsClip ? (
             <label className="chip cursor-pointer">
               <ImagePlus className="size-3.5" />
               Photo
@@ -907,7 +1016,7 @@ export function DropComposer({
               />
             </label>
           ) : null}
-          {!vibe && !sound && !poll && !note ? (
+          {!vibe && !sound && !poll && !note && !answering ? (
             <button
               type="button"
               className="chip"
@@ -1016,7 +1125,7 @@ export function DropComposer({
           chosen={tagged}
           onAdd={(person) => setTagged((current) => [...current, person])}
           onRemove={(person) => setTagged((current) => current.filter((row) => String(row.id) !== String(person.id)))}
-          fetcher={(query) => api.get<UserCard[]>("/social/mentionable/", { query: { q: query } })}
+          fetcher={(query) => socialService.mentionable(query)}
         />
 
         {!poll ? (
@@ -1028,9 +1137,7 @@ export function DropComposer({
             onAdd={(person) => setCrew((current) => [...current, person])}
             onRemove={(person) => setCrew((current) => current.filter((row) => String(row.id) !== String(person.id)))}
             fetcher={(query) =>
-              api
-                .get<{ people: UserCard[] }>("/collabs/people/", { query: { q: query } })
-                .then((answer) => answer.people ?? [])
+              collabsService.people(query).then((answer) => answer.people ?? [])
             }
           />
         ) : null}

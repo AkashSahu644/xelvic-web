@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Bookmark, ChevronRight, Lock, Search, SearchX, WifiOff, X } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Blank } from "@/components/Blank";
-import { VerifiedTick } from "@/components/Tick";
-import { api } from "@/lib/api";
-import { usePreferences } from "@/providers/PreferencesProvider";
+import { Avatar } from "@/components/ui/Avatar";
+import { Blank } from "@/components/ui/Blank";
+import { VerifiedTick } from "@/components/icons/Tick";
+import { usePreferences } from "@/hooks/usePreferences";
+import { socialService } from "@/services/social.service";
 import type { UserCard } from "@/types/api";
 import { Link } from "react-router-dom";
 
@@ -45,7 +45,7 @@ export function KeptView({ ownerId }: { ownerId: string }) {
     // it. The app's comment on the same line is worth repeating: reading
     // `results` here matched nothing and left the list permanently empty, which
     // looks exactly like a person nobody keeps.
-    queryFn: () => api.get<UserCard[]>(`/social/users/${ownerId}/crew/following/`),
+    queryFn: () => socialService.crew(ownerId, "following"),
     enabled: Boolean(ownerId),
   });
 

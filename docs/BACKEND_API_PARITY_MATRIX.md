@@ -115,7 +115,8 @@ It does **not** return `follows_you` or `muted`. The TypeScript `Relation` keeps
 | Endpoint | Client use | Status | Notes |
 | --- | --- | --- | --- |
 | `GET /audio/` | Home | **Used** | `{hero,recent,playlists,podcasts,artists}` |
-| `GET /audio/tracks/?q=` | Search | **Source-confirmed** | Returns `{tracks,query}` |
+| `GET /audio/tracks/?q=` | Search | **Source-confirmed** | Returns `{tracks,query}`; a bare `?q=` also carries `playlists` and `people` |
+| `GET /audio/tracks/?source=drop` | The uploads shelf — the sounds a clip can be laid on | **Used** | Returns `{tracks,query}`; the rows are `sound_row` of `Drop`, `limit` capped at 100 (default 60). **Omitting `source` answers the shipped catalogue instead**, capped at 500 (default 200) — a different list, and the one the editor's sound sheet used to draw by mistake |
 | `GET /audio/tracks/{id}/` | Detail | **Used** | |
 | `POST /audio/tracks/{id}/like/` | Like | **Used** | |
 | `POST /audio/tracks/{id}/play/` | Play signal | **Used** | |

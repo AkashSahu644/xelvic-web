@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { CalendarDays, Check, X } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Modal } from "@/components/Modal";
-import { useToast } from "@/providers/ToastProvider";
-import { cn } from "@/lib/cn";
-import { ApiError } from "@/lib/errors";
-import { count } from "@/lib/format";
+import { Avatar } from "@/components/ui/Avatar";
+import { Modal } from "@/components/overlays/Modal";
+import { useToast } from "@/hooks/useToast";
+import { cn } from "@/utils/cn";
+import { ApiError } from "@/utils/errors";
+import { count } from "@/utils/format";
 import type { DealUser } from "@/types/api";
 import { DELIVERABLE_KINDS, agreementDefault, fullDay, kindWord } from "./model";
 import { VerifiedTick } from "./parts";
-import { sendInvite } from "./queries";
+import { sendInvite } from "@/store/deals";
 
 /**
  * Write and send a brief to one creator — the second half of "invite a

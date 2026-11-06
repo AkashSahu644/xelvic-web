@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { ImagePlus, LoaderCircle, Plus, X } from "lucide-react";
-import { Button } from "@/components/Button";
-import { Modal } from "@/components/Modal";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { errorMessage } from "@/lib/errors";
-import { uploadAsset } from "@/lib/upload";
-import { useToast } from "@/providers/ToastProvider";
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/overlays/Modal";
+import { cn } from "@/utils/cn";
+import { errorMessage } from "@/utils/errors";
+import { uploadAsset } from "@/utils/upload";
+import { useToast } from "@/hooks/useToast";
+import { momentsService } from "@/services/moments.service";
 import type { Asset } from "@/types/api";
 import {
   audienceIds,
@@ -133,7 +133,7 @@ export function PollMoment({
         if (option.image) image = await uploadAsset(option.image);
         lines.push({ text: option.text.trim(), ...(image ? { image: image.id } : {}) });
       }
-      await api.post("/moments/", {
+      await momentsService.post({
         items: [
           {
             kind: "poll",

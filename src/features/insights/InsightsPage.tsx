@@ -2,15 +2,15 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { keepPreviousData } from "@tanstack/react-query";
 import { LineChart as InsightsMark, WifiOff } from "lucide-react";
-import { Blank } from "@/components/Blank";
-import { PageHeader } from "@/components/Page";
-import { api } from "@/lib/api";
-import { errorMessage } from "@/lib/errors";
-import { clock, count, fullDay, monthName, shortDay } from "@/lib/format";
-import { cn } from "@/lib/cn";
-import { useAuth } from "@/providers/AuthProvider";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import { useTheme } from "@/providers/ThemeProvider";
+import { Blank } from "@/components/ui/Blank";
+import { PageHeader } from "@/components/layout/Page";
+import { errorMessage } from "@/utils/errors";
+import { clock, count, fullDay, monthName, shortDay } from "@/utils/format";
+import { cn } from "@/utils/cn";
+import { useAuth } from "@/hooks/useAuth";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useTheme } from "@/hooks/useTheme";
+import { socialService } from "@/services/social.service";
 import { BarRow, Chip, DeltaChip, MetricCard, Panel, Sparkline, TrendChart } from "./Charts";
 import {
   BUCKETS,
@@ -74,10 +74,7 @@ export function InsightsPage() {
 
   const answer = useQuery({
     queryKey: ["insights", owner, days],
-    queryFn: () =>
-      api.get(
-        `/social/users/${owner}/insights/?days=${days}&visitors=0`,
-      ),
+    queryFn: () => socialService.insights(owner, days),
     enabled: Boolean(owner),
     // The chips re-ask, and a screen that blanked on every tap would redraw a
     // moment later. Keeping the last reading while the next one is in flight is

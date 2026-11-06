@@ -16,25 +16,20 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Button } from "@/components/Button";
-import { AuthedImage } from "@/components/Media";
-import { ConfirmDialog, Modal } from "@/components/Modal";
-import { PageHeader } from "@/components/Page";
-import { EmptyState, ErrorState, PageSkeleton } from "@/components/States";
+import { Avatar } from "@/components/ui/Avatar";
+import { Button } from "@/components/ui/Button";
+import { AuthedImage } from "@/components/media/Media";
+import { ConfirmDialog, Modal } from "@/components/overlays/Modal";
+import { PageHeader } from "@/components/layout/Page";
+import { EmptyState, ErrorState, PageSkeleton } from "@/components/ui/States";
 import { TrackRow } from "@/features/audio/TrackRow";
-import { api } from "@/lib/api";
-import { count, duration } from "@/lib/format";
-import { uploadAsset } from "@/lib/upload";
-import { usePlayer } from "@/providers/PlayerProvider";
-import { useToast } from "@/providers/ToastProvider";
-import type { Playlist, ThreadCard, Track } from "@/types/api";
-
-interface PlaylistDetail {
-  playlist: Playlist;
-  tracks: Track[];
-  shared_with?: PlaylistShare[];
-}
+import { audioService } from "@/services/audio.service";
+import { chatService } from "@/services/chat.service";
+import { count, duration } from "@/utils/format";
+import { uploadAsset } from "@/utils/upload";
+import { usePlayer } from "@/hooks/usePlayer";
+import { useToast } from "@/hooks/useToast";
+import type { ThreadCard, Track } from "@/types/api";
 
 interface PlaylistShare {
   id: string;
@@ -66,23 +61,23 @@ export function PlaylistPage() {
 
   const detail = useQuery({
     queryKey: ["playlist", playlistId],
-    queryFn: () => api.get<PlaylistDetail>(`/audio/playlists/${playlistId}/`),
+    queryFn: () => audioService.playlist(playlistId),
     enabled: Boolean(playlistId),
   });
   const shares = useQuery({
     queryKey: ["playlist-shares", playlistId],
-    queryFn: () => api.get<{ shared_with: PlaylistShare[] }>(`/audio/playlists/${playlistId}/share/`),
+    queryFn: () => audioService.shares(playlistId),
     enabled: shareOpen && Boolean(detail.data?.playlist.mine),
   });
   const threads = useQuery({
     queryKey: ["threads-share"],
-    queryFn: () => api.get<{ threads: ThreadCard[] }>("/chat/threads/"),
+    queryFn: () => chatService.threads(),
     enabled: shareOpen,
     staleTime: 20_000,
   });
   const search = useQuery({
     queryKey: ["audio-search", trackQuery.trim()],
-    queryFn: () => api.get<{ tracks: Track[] }>("/audio/tracks/", { query: { q: trackQuery.trim() } }),
+    queryFn: () => audioService.tracks<{ tracks: Track[] }>({ q: trackQuery.trim() }),
     enabled: addOpen && trackQuery.trim().length > 1,
   });
 
@@ -104,7 +99,7 @@ export function PlaylistPage() {
     try {
       let coverId: string | null | undefined;
       if (coverFile) coverId = (await uploadAsset(coverFile, { kind: "image" })).id;
-      await api.patch<{ playlist: Playlist }>(`/audio/playlists/${playlist.id}/`, {
+      await audioService.updatePlaylist(playlist.id, {
         name: name.trim(),
         ...(coverId !== undefined ? { cover: coverId } : {}),
       });
@@ -127,7 +122,7 @@ export function PlaylistPage() {
     if (!playlist) return;
     setSaving(true);
     try {
-      await api.delete(`/audio/playlists/${playlist.id}/`);
+      await audioService.deletePlaylist(playlist.id);
       await queryClient.invalidateQueries({ queryKey: ["audio-home"] });
       toast({ title: "Playlist taken down", tone: "success" });
       navigate("/app/audio");
@@ -147,7 +142,7 @@ export function PlaylistPage() {
     if (!playlist || adding) return;
     setAdding(track.id);
     try {
-      await api.post(`/audio/playlists/${playlist.id}/items/`, { track: track.id });
+      await audioService.addTrack(playlist.id, track.id);
       await invalidate();
       toast({ title: "Added to the playlist", tone: "success" });
     } catch (error) {
@@ -164,7 +159,7 @@ export function PlaylistPage() {
   async function removeTrack(track: Track) {
     if (!playlist || !track.item) return;
     try {
-      await api.delete(`/audio/playlists/${playlist.id}/items/${track.item}/`);
+      await audioService.removeTrack(playlist.id, track.item);
       await invalidate();
     } catch (error) {
       toast({
@@ -181,10 +176,10 @@ export function PlaylistPage() {
     const target = index + direction;
     if (target < 0 || target >= next.length) return;
     [next[index], next[target]] = [next[target], next[index]];
-    const items = next.map((track) => track.item).filter(Boolean);
+    const items = next.map((track) => track.item).filter((item): item is string => Boolean(item));
     if (items.length !== tracks.length) return;
     try {
-      await api.post(`/audio/playlists/${playlist.id}/order/`, { items });
+      await audioService.reorder(playlist.id, items);
       await invalidate();
     } catch (error) {
       toast({
@@ -199,7 +194,7 @@ export function PlaylistPage() {
     if (!playlist || sharing) return;
     setSharing(true);
     try {
-      await api.post(`/audio/playlists/${playlist.id}/share/`, { thread: thread.id });
+      await audioService.share(playlist.id, { thread: thread.id });
       await queryClient.invalidateQueries({ queryKey: ["playlist-shares", playlistId] });
       toast({ title: "Sent", description: "The playlist landed in that convo.", tone: "success" });
     } catch (error) {
@@ -217,7 +212,7 @@ export function PlaylistPage() {
     if (!playlist || sharing) return;
     setSharing(true);
     try {
-      const made = await api.post<{ token?: string; link?: string }>(`/audio/playlists/${playlist.id}/share/`, { link: true });
+      const made = await audioService.share(playlist.id, { link: true });
       await queryClient.invalidateQueries({ queryKey: ["playlist-shares", playlistId] });
       if (made.token) {
         const url = `${window.location.origin}/s/${made.token}`;
@@ -239,7 +234,7 @@ export function PlaylistPage() {
 
   async function revoke(share: PlaylistShare) {
     try {
-      await api.delete(`/audio/playlists/${playlistId}/share/${share.id}/`);
+      await audioService.unshare(playlistId, share.id);
       await queryClient.invalidateQueries({ queryKey: ["playlist-shares", playlistId] });
     } catch (error) {
       toast({

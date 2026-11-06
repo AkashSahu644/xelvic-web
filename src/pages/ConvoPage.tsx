@@ -1,4 +1,4 @@
-﻿import {
+import {
   Fragment,
   lazy,
   Suspense,
@@ -22,6 +22,7 @@ import {
   Phone,
   PhoneIncoming,
   PhoneMissed,
+  PhoneOff,
   PhoneOutgoing,
   Search,
   Settings,
@@ -32,37 +33,43 @@ import {
   X,
 } from "lucide-react";
 import { FaUserPlus } from "react-icons/fa6";
-import { Avatar } from "@/components/Avatar";
-import { Button, Spinner } from "@/components/Button";
-import { ConfirmDialog, Modal } from "@/components/Modal";
-import { EmptyState, ErrorState } from "@/components/States";
+import { Avatar } from "@/components/ui/Avatar";
+import { Button, Spinner } from "@/components/ui/Button";
+import { ConfirmDialog, Modal } from "@/components/overlays/Modal";
+import { EmptyState, ErrorState } from "@/components/ui/States";
 import { AlertsManageModal } from "@/features/alerts/AlertsManageModal";
 import { AlertsRow } from "@/features/alerts/AlertsRow";
 import { alertWhen } from "@/features/alerts/model";
-import { useAlerts } from "@/features/alerts/useAlerts";
+import { useAlerts } from "@/hooks/useAlerts";
 import { ConvoRow } from "@/features/convo/ConvoRow";
 import { ConvoSheet } from "@/features/convo/ConvoSheet";
 import { VaultModal } from "@/features/convo/VaultModal";
-import { stamp, threadTitle } from "@/features/convo/model";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { errorMessage } from "@/lib/errors";
-import { useAuth } from "@/providers/AuthProvider";
-import { useSocket, useSocketEvent } from "@/providers/SocketProvider";
-import { useTheme } from "@/providers/ThemeProvider";
-import { useToast } from "@/providers/ToastProvider";
+import { inUnreadLane, stamp, threadTitle, threadUnread } from "@/features/convo/model";
+import { cn } from "@/utils/cn";
+import { errorMessage } from "@/utils/errors";
+import { authService } from "@/services/auth.service";
+import { callsService } from "@/services/calls.service";
+import { chatService } from "@/services/chat.service";
+import { momentsService } from "@/services/moments.service";
+import { socialService } from "@/services/social.service";
+import { sparksService } from "@/services/sparks.service";
+import { readCallsSeen, writeCallsSeen } from "@/store/callsSeen";
+import { useAuth } from "@/hooks/useAuth";
+import { useCallEngine } from "@/hooks/useCall";
+import { useSocket, useSocketEvent } from "@/hooks/useSocket";
+import { useTheme } from "@/hooks/useTheme";
+import { useToast } from "@/hooks/useToast";
+// The camera's own code, fetched while this list is being read. See
+// `features/camera/warm.ts` — this downloads a module and nothing else.
+import { warmCamera, warmCameraWhenIdle } from "@/features/camera/warm";
 import type {
   ChatRequest,
   Message,
-  MomentTray,
-  Page,
   Relationship,
-  RequestsBundle,
   Spark,
   ThreadCard,
   TrayMoment,
   UserCard,
-  VaultState,
 } from "@/types/api";
 
 const CameraCapture = lazy(() =>
@@ -173,14 +180,40 @@ function callDay(at: string | null | undefined) {
   };
 }
 
+function callStamp(at: string | null | undefined) {
+  if (!at) return "";
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return "";
+  const time = date.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `${callDay(at).label}, ${time}`;
+}
+
 function CallHistory() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const callEngine = useCallEngine();
   const calls = useQuery({
     queryKey: ["call-history"],
-    queryFn: () => api.get<{ results: CallLog[] }>("/calls/history/"),
+    queryFn: () => callsService.history(),
     staleTime: 15_000,
   });
+
+  // Calling somebody back from the log they are in. The row already knows who
+  // it was with and what kind of call it was, so the button is the same call
+  // placed again — and a refusal is shown as it came, not swallowed.
+  function callBack(userId: string | undefined, kind: string | undefined) {
+    if (!userId) return;
+    void callEngine.ring(userId, kind === "video" ? "video" : "audio").catch((error: unknown) => {
+      toast({
+        title: "That call did not go through.",
+        description: errorMessage(error),
+        tone: "error",
+      });
+    });
+  }
 
   if (calls.isLoading) {
     return (
@@ -219,103 +252,111 @@ function CallHistory() {
   }
 
   return (
-    <div className="space-y-5 px-2.5 pb-5 pt-3">
-      <div className="flex items-center justify-between px-1">
-        <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-dim">
-          Recent calls
-        </p>
-        <span className="rounded-full bg-[color-mix(in_srgb,var(--ink)_6%,transparent)] px-2 py-0.5 text-[9.5px] font-bold text-dim">
-          {rows.length}
-        </span>
-      </div>
+    <div className="">
       {Array.from(groups.entries()).map(([key, group]) => (
         <section key={key}>
-          <h3 className="mb-2 px-1 text-[10px] font-extrabold uppercase tracking-[0.13em] text-dim">
-            {group.label}
-          </h3>
-          <div className="space-y-2">
+          <div className="">
             {group.rows.map((log) => {
+              const declined =
+                log.mine === "declined" || log.outcome === "declined";
               const dead = log.mine !== "joined" && log.mine !== "left";
+              const answered = (log.seconds ?? 0) > 0;
               const only = (log.others ?? []).length === 1;
-              const Icon =
-                log.kind === "video"
-                  ? Video
-                  : dead
-                    ? PhoneMissed
-                    : log.outgoing
-                      ? PhoneOutgoing
-                      : PhoneIncoming;
+              const Icon = declined
+                ? PhoneOff
+                : dead
+                  ? PhoneMissed
+                  : log.outgoing
+                    ? PhoneOutgoing
+                    : PhoneIncoming;
               const other = log.others?.[0];
               return (
                 <div
                   key={log.id}
-                  className="group flex min-h-[78px] items-center gap-1 rounded-[20px] border border-line bg-card px-2.5 py-2.5 shadow-[0_1px_2px_rgba(17,17,26,0.04)] transition hover:-translate-y-px hover:border-accent/25 hover:shadow-[0_6px_18px_rgba(17,17,26,0.07)]"
+                  className={cn("group relative overflow-hidden border border-line/90 bg-card px-1.5 hover:bg-card/5",
+                    dead
+                        ? "bg-accent/10"
+                        : log.outgoing
+                          ? "bg-card"
+                          : "bg-[var(--good)]",
+                  )}
                 >
-                  <button
-                    type="button"
-                    disabled={!log.thread}
-                    onClick={() =>
-                      log.thread && navigate(`/app/convo/${log.thread}`)
-                    }
-                    className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:cursor-default"
-                  >
-                    <Avatar src={other?.avatar} name={callWho(log)} size={46} />
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-2">
-                        <span className="min-w-0 flex-1 truncate text-[14.5px] font-bold tracking-[-0.15px]">
-                          {callWho(log)}
-                        </span>
-                        <span className="shrink-0 text-[10.5px] font-semibold text-dim">
-                          {stamp(log.at)}
-                        </span>
-                      </span>
-                      <span
-                        className={cn(
-                          "mt-1 flex items-center gap-1.5 text-[12px]",
-                          dead ? "text-[var(--bad)]" : "text-dim",
-                        )}
-                      >
-                        <span
-                          className={cn(
-                            "flex size-5 shrink-0 items-center justify-center rounded-full",
-                            dead
-                              ? "bg-[color-mix(in_srgb,var(--bad)_10%,transparent)]"
-                              : "bg-[color-mix(in_srgb,var(--ink)_6%,transparent)]",
-                          )}
-                        >
-                          <Icon className="size-3" aria-hidden />
-                        </span>
-                        <span className="truncate">{callLine(log)}</span>
-                        {log.kind === "video" ? (
-                          <span className="shrink-0 rounded-full border border-line px-1.5 py-px text-[8px] font-extrabold uppercase tracking-wide text-dim">
-                            Video
-                          </span>
-                        ) : null}
-                      </span>
-                    </span>
-                  </button>
-                  {only ? (
+                  <div className="flex min-h-[52px] items-center gap-2 pl-1.5">
                     <button
                       type="button"
+                      disabled={!log.thread}
                       onClick={() =>
-                        toast({
-                          title: "Calls are not on the web yet",
-                          description: "Open the convo to keep talking.",
-                          tone: "info",
-                        })
+                        log.thread && navigate(`/app/convo/${log.thread}`)
                       }
-                      className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-accent shadow-[0_3px_10px_color-mix(in_srgb,var(--accent)_12%,transparent)] transition hover:scale-105 hover:brightness-95"
-                      aria-label={
-                        log.kind === "video" ? "Video call back" : "Call back"
-                      }
+                      className="flex min-w-0 flex-1 items-center justify-center gap-3 rounded-[14px] text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 disabled:cursor-default"
                     >
-                      {log.kind === "video" ? (
-                        <Video className="size-[17px]" />
-                      ) : (
-                        <Phone className="size-[17px]" />
-                      )}
+                      <span className="relative flex shrink-0 items-center self-center">
+                        <Avatar
+                          src={other?.avatar}
+                          name={callWho(log)}
+                          size={40}
+                        />
+                      </span>
+                      <span className="min-w-0 flex-1 self-center py-1">
+                        <span className="flex min-w-0 items-center gap-2.5">
+                          <span className="min-w-0 truncate text-[14px] font-extrabold tracking-[-0.15px]">
+                            {callWho(log)}
+                          </span>
+                          <span className="shrink-0 whitespace-nowrap text-[10px] font-semibold tabular-nums text-dim">
+                            {callStamp(log.at)}
+                          </span>
+                        </span>
+                        <span
+                          className={cn(
+                            "mt-0 flex min-w-0 items-center gap-1.5 text-[11.5px] leading-4",
+                            dead
+                              ? "font-semibold text-[var(--bad)]"
+                              : "font-medium text-dim",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "flex shrink-0 items-center justify-center",
+                              answered
+                                ? "text-[var(--good)]"
+                                : "text-[var(--bad)]",
+                            )}
+                          >
+                            <Icon
+                              className="size-2.5"
+                              strokeWidth={2.6}
+                              aria-hidden
+                            />
+                          </span>
+                          <span className="truncate">{callLine(log)}</span>
+                        </span>
+                      </span>
                     </button>
-                  ) : null}
+                    <div className="flex shrink-0 items-center">
+                      {only ? (
+                        <button
+                          type="button"
+                          onClick={() => callBack(other?.user, log.kind)}
+                          className="flex size-9 items-center justify-center rounded-full bg-[var(--accent-soft)] text-accent ring-1 ring-inset ring-[color-mix(in_srgb,var(--accent)_18%,transparent)] transition duration-200 hover:scale-105 hover:bg-accent hover:text-on-accent active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                          aria-label={
+                            log.kind === "video"
+                              ? "Video call back"
+                              : "Call back"
+                          }
+                        >
+                          {log.kind === "video" ? (
+                            <Video className="size-[17px]" />
+                          ) : (
+                            <Phone className="size-[15px]" />
+                          )}
+                        </button>
+                      ) : (
+                        <span className="flex size-9 items-center justify-center rounded-full bg-surface-2 text-dim/70">
+                          <Users className="size-[15px]" />
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
               );
             })}
@@ -342,7 +383,7 @@ function RequestsPanel() {
   const { toast } = useToast();
   const requests = useQuery({
     queryKey: ["social-requests"],
-    queryFn: () => api.get<RequestsBundle>("/social/requests/"),
+    queryFn: () => socialService.requests(),
   });
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -355,10 +396,7 @@ function RequestsPanel() {
   async function answer(userId: string, yes: boolean) {
     setBusy(userId);
     try {
-      await api.post(
-        `/social/users/${userId}/${yes ? "accept" : "decline"}/`,
-        {},
-      );
+      await socialService.answerRequest(userId, yes);
       toast({
         title: yes ? "Accepted — the convo is open." : "Declined.",
         tone: "success",
@@ -496,15 +534,12 @@ export function NewConvoPanel({ onClose }: { onClose: () => void }) {
   const tried = useRef("");
   const people = useQuery({
     queryKey: ["people-search", deferred],
-    queryFn: () =>
-      api.get<Page<UserCard>>("/auth/users/search/", {
-        query: { q: deferred },
-      }),
+    queryFn: () => authService.searchUsers(deferred),
     staleTime: 10_000,
   });
   const vault = useQuery({
     queryKey: ["vault"],
-    queryFn: () => api.get<VaultState>("/chat/vault/"),
+    queryFn: () => chatService.vaultState(),
     retry: false,
     staleTime: 20_000,
   });
@@ -521,8 +556,8 @@ export function NewConvoPanel({ onClose }: { onClose: () => void }) {
     }
     if (!/^\d+$/.test(code) || tried.current === code) return;
     tried.current = code;
-    void api
-      .post("/chat/vault/unlock/", { code })
+    void chatService
+      .vaultUnlock(code)
       .then(() => {
         tried.current = "";
         setQuery("");
@@ -534,12 +569,10 @@ export function NewConvoPanel({ onClose }: { onClose: () => void }) {
   async function start(person: UserCard) {
     setBusy(person.id);
     try {
-      const response = await api.post<{
+      const response = await chatService.start<{
         thread: ThreadCard | null;
         gate?: { reason?: string };
-      }>("/chat/threads/", {
-        user: person.id,
-      });
+      }>(person.id);
       if (!response.thread) {
         toast({
           title: "This convo is not open yet",
@@ -731,10 +764,7 @@ function NewGroupModal({
   const { toast } = useToast();
   const people = useQuery({
     queryKey: ["group-people", deferred],
-    queryFn: () =>
-      api.get<Page<UserCard>>("/auth/users/search/", {
-        query: { q: deferred },
-      }),
+    queryFn: () => authService.searchUsers(deferred),
     enabled: open,
     staleTime: 10_000,
   });
@@ -767,10 +797,10 @@ function NewGroupModal({
     }
     setBusy(true);
     try {
-      const response = await api.post<{ thread: ThreadCard }>("/chat/groups/", {
-        title: title.trim(),
-        members: members.map((person) => person.id),
-      });
+      const response = await chatService.createGroup(
+        title.trim(),
+        members.map((person) => person.id),
+      );
       toast({ title: "Group made", tone: "success" });
       onClose();
       onCreated?.();
@@ -976,11 +1006,17 @@ export function ConvoPage({
   activeThreadId,
   composeOpen = false,
   onToggleCompose,
+  onOpenSpark,
 }: {
   embedded?: boolean;
   activeThreadId?: string;
   composeOpen?: boolean;
   onToggleCompose?: () => void;
+  onOpenSpark?: (
+    thread: ThreadCard,
+    spark: Spark | null,
+    balance?: number,
+  ) => void;
 }) {
   const [params, setParams] = useSearchParams();
   const raw = params.get("lane") ?? params.get("tab");
@@ -999,6 +1035,15 @@ export function ConvoPage({
   const [signOutOpen, setSignOutOpen] = useState(false);
   const [vaultOpen, setVaultOpen] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
+  // The camera's code is fetched while this list is being read, so that tapping
+  // the camera is not also the tap that begins a download. See
+  // `features/camera/warm.ts` — it asks for no camera and no microphone.
+  useEffect(() => warmCameraWhenIdle(), []);
+  // Opening the menu is itself intent, and the beat between that and a tap on
+  // its camera row is enough to fetch the chunk the tap would have started.
+  useEffect(() => {
+    if (menuOpen) warmCamera();
+  }, [menuOpen]);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [selected, setSelected] = useState<ThreadCard | null>(null);
@@ -1009,6 +1054,9 @@ export function ConvoPage({
   const navigate = useNavigate();
   const { toast } = useToast();
   const { user, logout } = useAuth();
+  const [callsSeenAt, setCallsSeenAt] = useState(() =>
+    readCallsSeen(user?.id),
+  );
   const { status: socketStatus } = useSocket();
   const { design } = useTheme();
 
@@ -1018,14 +1066,17 @@ export function ConvoPage({
     return () => window.clearTimeout(timer);
   }, [searchOpen]);
 
+  useEffect(() => {
+    setCallsSeenAt(readCallsSeen(user?.id));
+  }, [user?.id]);
+
   const threads = useQuery({
     queryKey: ["threads"],
-    queryFn: () =>
-      api.get<{ threads: ThreadCard[]; unread: number }>("/chat/threads/"),
+    queryFn: () => chatService.threads(),
   });
   const vault = useQuery({
     queryKey: ["vault"],
-    queryFn: () => api.get<VaultState>("/chat/vault/"),
+    queryFn: () => chatService.vaultState(),
     retry: false,
     staleTime: 20_000,
   });
@@ -1035,29 +1086,42 @@ export function ConvoPage({
   // themselves, including in threads the filter would never surface.
   const messageSearch = useQuery({
     queryKey: ["chat-search", deferredSearch],
-    queryFn: () =>
-      api.get<{ query: string; messages: Message[] }>("/chat/search/", {
-        query: { q: deferredSearch },
-      }),
+    queryFn: () => chatService.search(deferredSearch),
     enabled: searchOpen && deferredSearch.length >= 2,
     staleTime: 20_000,
   });
   const alerts = useAlerts();
   const sparks = useQuery({
     queryKey: ["sparks"],
-    queryFn: () => api.get<{ sparks: Spark[] }>("/sparks/"),
+    queryFn: () => sparksService.list(),
     staleTime: 60_000,
   });
   const moments = useQuery({
     queryKey: ["moments-tray"],
-    queryFn: () => api.get<MomentTray>("/moments/tray/"),
+    queryFn: () => momentsService.tray(),
     staleTime: 30_000,
   });
   const requests = useQuery({
     queryKey: ["social-requests"],
-    queryFn: () => api.get<RequestsBundle>("/social/requests/"),
+    queryFn: () => socialService.requests(),
     staleTime: 15_000,
   });
+  const callHistory = useQuery({
+    queryKey: ["call-history"],
+    queryFn: () => callsService.history(),
+    staleTime: 15_000,
+  });
+  useEffect(() => {
+    if (lane !== "calls" || !callHistory.data || !user?.id) return;
+    let latest = 0;
+    for (const call of callHistory.data.results) {
+      const at = call.at ? Date.parse(call.at) : Number.NaN;
+      if (Number.isFinite(at) && at > latest) latest = at;
+    }
+    if (!latest || latest <= callsSeenAt) return;
+    writeCallsSeen(user.id, latest);
+    setCallsSeenAt(latest);
+  }, [lane, callHistory.data, callsSeenAt, user?.id]);
   useSocketEvent(
     [
       "message.new",
@@ -1076,7 +1140,9 @@ export function ConvoPage({
       if (frame.event === "thread.update") {
         const threadId = String(data.thread_id ?? "");
         if (!threadId) return;
-        const preview = (data.preview ?? undefined) as ThreadCard["preview"] | undefined;
+        const preview = (data.preview ?? undefined) as
+          | ThreadCard["preview"]
+          | undefined;
         const at = typeof data.at === "string" ? data.at : undefined;
         let found = false;
         queryClient.setQueryData<{ threads: ThreadCard[]; unread: number }>(
@@ -1087,8 +1153,9 @@ export function ConvoPage({
             const rows = current.threads.map((row) => {
               if (row.id !== threadId) return row;
               found = true;
-              const before = row.unread_count ?? row.unread ?? 0;
-              const after = typeof data.unread === "number" ? data.unread : before;
+              const before = threadUnread(row);
+              const after =
+                typeof data.unread === "number" ? data.unread : before;
               delta = after - before;
               return {
                 ...row,
@@ -1138,7 +1205,9 @@ export function ConvoPage({
   );
   const unreadRows = useMemo(
     () =>
-      rows.filter((thread) => (thread.unread_count ?? thread.unread ?? 0) > 0),
+      // The lane, not the count: a convo whose only waiting line is a Spark is
+      // unread by the number and has nothing on it to read. See `inUnreadLane`.
+      rows.filter((thread) => inUnreadLane(thread)),
     [rows],
   );
   const pinnedCount = useMemo(
@@ -1171,6 +1240,15 @@ export function ConvoPage({
   const requestCount =
     (requests.data?.incoming_chat?.length ?? 0) +
     (requests.data?.incoming_follow?.length ?? 0);
+  const missedCallCount = useMemo(() => {
+    const calls = callHistory.data?.results ?? [];
+    return calls.filter((call) => {
+      if (call.mine !== "missed") return false;
+      if (!callsSeenAt) return true;
+      const at = call.at ? Date.parse(call.at) : Number.NaN;
+      return !Number.isFinite(at) || at > callsSeenAt;
+    }).length;
+  }, [callHistory.data, callsSeenAt]);
   const filteredRows = useMemo(() => {
     const query = listSearch.trim().toLowerCase();
     if (!query) return rows;
@@ -1233,7 +1311,7 @@ export function ConvoPage({
     }
     setMenuOpen(false);
     try {
-      await api.post("/chat/threads/read/", {});
+      await chatService.readAll();
       await queryClient.invalidateQueries({ queryKey: ["threads"] });
       await queryClient.invalidateQueries({ queryKey: ["requests-count"] });
       toast({ title: "All caught up.", tone: "success" });
@@ -1251,9 +1329,7 @@ export function ConvoPage({
     {
       key: "unread",
       label: "Unread",
-      count: filteredRows.filter(
-        (thread) => (thread.unread_count ?? thread.unread ?? 0) > 0,
-      ).length,
+      count: filteredRows.filter((thread) => inUnreadLane(thread)).length,
     },
     {
       key: "groups",
@@ -1261,14 +1337,23 @@ export function ConvoPage({
       count: filteredRows.filter((thread) => thread.kind === "group").length,
     },
     { key: "requested", label: "Requests", count: requestCount },
-    { key: "calls", label: "Calls" },
+    {
+      key: "calls",
+      label: "Calls",
+      count: missedCallCount,
+    },
   ];
+
+  const tabLanes = lanes.filter((item) => item.key !== "requested");
+  const activeTabIndex = tabLanes.findIndex((item) => item.key === lane);
+  const tabPercent = 100 / tabLanes.length;
+  const underlineWidth = tabPercent * 0.75;
+  const underlineLeft =
+    activeTabIndex * tabPercent + (tabPercent - underlineWidth) / 2;
 
   const displayRows =
     lane === "unread"
-      ? filteredRows.filter(
-          (thread) => (thread.unread_count ?? thread.unread ?? 0) > 0,
-        )
+      ? filteredRows.filter((thread) => inUnreadLane(thread))
       : lane === "groups"
         ? filteredRows.filter((thread) => thread.kind === "group")
         : filteredRows;
@@ -1300,31 +1385,38 @@ export function ConvoPage({
       )}
     >
       <header
-        className={cn("z-30 w-full shrink-0 bg-page", !embedded && "sticky top-0")}
+        className={cn(
+          "z-30 w-full shrink-0 border-b border-line/70 bg-[color-mix(in_srgb,var(--page)_90%,transparent)] backdrop-blur-xl",
+          !embedded && "sticky top-0 safe-top",
+        )}
       >
-        <div className="relative mx-auto flex h-[58px] w-full max-w-[760px] items-center justify-between px-3">
-          <div className="flex items-center gap-1">
+        <div className="relative mx-auto flex h-[56px] w-full max-w-[760px] items-center justify-between px-3">
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => setMenuOpen(true)}
-              className="shrink-0 rounded-full transition hover:brightness-105"
+              className="group flex size-11 shrink-0 items-center justify-center rounded-full transition duration-200 active:scale-95"
               aria-label="Convo list menu"
+              aria-haspopup="dialog"
+              aria-expanded={menuOpen}
               title="Convo list menu"
             >
-              <Avatar user={user} name={user?.name} size={38} />
+              <span className="flex size-10 items-center justify-center rounded-full border border-line/80 transition-colors duration-200 group-hover:border-accent/40 group-active:border-accent/60">
+                <Avatar user={user} name={user?.name} size={36} />
+              </span>
             </button>
 
             <button
               type="button"
               onClick={toggleSearch}
               className={cn(
-                "flex size-10 shrink-0 items-center justify-center rounded-full transition",
-                searchOpen ? "text-accent" : "text-ink hover:text-accent",
+                "flex size-10 shrink-0 items-center justify-center rounded-full text-ink transition duration-200",
+                searchOpen
+                  ? "bg-[var(--accent-soft)] text-accent hover:bg-[var(--accent-soft)] hover:text-accent"
+                  : "hover:bg-surface-2 hover:text-accent",
               )}
               aria-label={
-                searchOpen
-                  ? "Hide conversation search"
-                  : "Search conversations"
+                searchOpen ? "Hide conversation search" : "Search conversations"
               }
               aria-expanded={searchOpen}
               title={searchOpen ? "Hide search" : "Search conversations"}
@@ -1334,14 +1426,14 @@ export function ConvoPage({
           </div>
 
           <div className="pointer-events-none absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2">
-            <h1 className="text-[22px] font-extrabold leading-none tracking-[-0.04em]">
+            <h1 className="select-none text-[22px] font-extrabold leading-none tracking-[-0.04em] text-ink">
               Convo
             </h1>
             <span
               className={cn(
-                "size-[7px] shrink-0 rounded-full",
+                "size-2 shrink-0 rounded-full transition-all duration-300",
                 socketStatus === "live" &&
-                  "shadow-[0_0_0_3px_color-mix(in_srgb,var(--good)_10%,transparent)]",
+                  "shadow-[0_0_0_3px_color-mix(in_srgb,var(--good)_12%,transparent)]",
               )}
               style={{
                 backgroundColor:
@@ -1354,13 +1446,15 @@ export function ConvoPage({
             />
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={onToggleCompose}
               className={cn(
-                "flex size-10 shrink-0 items-center justify-center rounded-full text-ink transition hover:text-accent",
-                composeOpen && "text-accent",
+                "flex size-10 shrink-0 items-center justify-center rounded-full text-ink transition duration-200 active:scale-95",
+                composeOpen
+                  ? "bg-[var(--accent-soft)] text-accent hover:bg-[var(--accent-soft)] hover:text-accent"
+                  : "hover:bg-surface-2 hover:text-accent",
               )}
               aria-label={composeOpen ? "Close new convo" : "New convo"}
               aria-pressed={composeOpen}
@@ -1372,7 +1466,12 @@ export function ConvoPage({
             <button
               type="button"
               onClick={() => setCameraOpen(true)}
-              className="flex size-10 shrink-0 items-center justify-center rounded-full text-ink transition hover:text-accent"
+              // A hover or a finger on the button is the beat before the tap,
+              // and that beat is enough to fetch the camera's chunk.
+              onMouseEnter={warmCamera}
+              onFocus={warmCamera}
+              onTouchStart={warmCamera}
+              className="flex size-10 shrink-0 items-center justify-center rounded-full text-ink transition duration-200 hover:bg-surface-2 hover:text-accent active:scale-95"
               aria-label="Camera"
               title="Camera"
             >
@@ -1386,13 +1485,15 @@ export function ConvoPage({
         <div
           className={cn(
             "grid transition-all duration-200 ease-out motion-reduce:transition-none",
-            searchOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+            searchOpen
+              ? "grid-rows-[1fr] opacity-100"
+              : "grid-rows-[0fr] opacity-0",
           )}
           aria-hidden={!searchOpen}
         >
           <div className="min-h-0 overflow-hidden">
             <div className="px-2 py-1.5">
-              <label className="flex min-h-10 items-center gap-2 rounded-[10px] border border-line/80 bg-[color-mix(in_srgb,var(--card)_76%,transparent)] px-3 shadow-[0_2px_10px_rgba(17,17,26,0.03)] backdrop-blur focus-within:border-accent">
+              <label className="flex min-h-10 items-center gap-2 rounded-lg border border-line/80 bg-[color-mix(in_srgb,var(--card)_76%,transparent)] px-3 shadow-[0_2px_10px_rgba(17,17,26,0.03)] backdrop-blur focus-within:border-accent">
                 <Search className="size-4 shrink-0 text-dim" aria-hidden />
                 <input
                   ref={searchInputRef}
@@ -1434,7 +1535,10 @@ export function ConvoPage({
                   {messageSearch.isLoading ? (
                     <div className="space-y-1 px-1 pb-1" aria-hidden>
                       {[0, 1, 2].map((row) => (
-                        <div key={row} className="skeleton h-11 rounded-[10px]" />
+                        <div
+                          key={row}
+                          className="skeleton h-11 rounded-[10px]"
+                        />
                       ))}
                     </div>
                   ) : messageSearch.isError ? (
@@ -1467,17 +1571,24 @@ export function ConvoPage({
                             <span className="min-w-0 flex-1">
                               <span className="flex items-baseline gap-1.5">
                                 <span className="min-w-0 flex-1 truncate text-[11.5px] font-bold">
-                                  {seat ? threadTitle(seat) : message.sender?.name || message.sender?.username || "Conversation"}
+                                  {seat
+                                    ? threadTitle(seat)
+                                    : message.sender?.name ||
+                                      message.sender?.username ||
+                                      "Conversation"}
                                 </span>
                                 <span className="shrink-0 text-[9px] tabular-nums text-dim">
                                   {stamp(message.created_at)}
                                 </span>
                               </span>
                               <span className="mt-0.5 block line-clamp-2 text-[10.5px] leading-4 text-dim">
-                                {message.body || message.asset?.original_name || `${message.kind} message`}
+                                {message.body ||
+                                  message.asset?.original_name ||
+                                  `${message.kind} message`}
                               </span>
                               <span className="mt-0.5 block text-[9px] font-semibold text-accent">
-                                {message.sender?.name || message.sender?.username}
+                                {message.sender?.name ||
+                                  message.sender?.username}
                               </span>
                             </span>
                           </button>
@@ -1492,46 +1603,48 @@ export function ConvoPage({
         </div>
 
         <div
-          className="mx-auto flex w-full max-w-[760px] shrink-0 items-stretch"
+          className="relative mx-auto flex w-full max-w-[760px] shrink-0 items-stretch border-b-2"
           role="tablist"
           aria-label="Convo lanes"
         >
-          {lanes
-            .filter((item) => item.key !== "requested")
-            .map((item) => {
-              const on = lane === item.key;
-              return (
-                <button
-                  key={item.key}
-                  type="button"
-                  role="tab"
-                  aria-selected={on}
-                  onClick={() => setLane(item.key)}
-                  className={cn(
-                    "relative flex h-[46px] min-w-0 flex-1 items-center justify-center gap-1 text-[15.5px] transition-colors",
-                    on
-                      ? "font-extrabold text-accent"
-                      : "font-semibold text-dim hover:text-ink",
-                  )}
-                >
-                  <span className="truncate">{item.label}</span>
-                  {item.key === "all" && item.count ? (
-                    <span className="tabular-nums">{item.count}</span>
-                  ) : null}
-                  {on ? (
-                    <span
-                      className="absolute inset-x-0 bottom-0 h-[3px] bg-accent"
-                      aria-hidden
-                    />
-                  ) : null}
-                </button>
-              );
-            })}
+          {tabLanes.map((item) => {
+            const on = lane === item.key;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                onClick={() => setLane(item.key)}
+                className={cn(
+                  "relative flex h-[32px] min-w-0 flex-1 items-center justify-center gap-1 text-[14px] transition-colors",
+                  on
+                    ? "font-extrabold text-accent"
+                    : "font-semibold text-dim hover:text-ink",
+                )}
+              >
+                <span className="truncate">{item.label}</span>
+                {item.count ? (
+                  <span className="tabular-nums">{item.count}</span>
+                ) : null}
+              </button>
+            );
+          })}
+          {activeTabIndex >= 0 ? (
+            <span
+              className="pointer-events-none absolute bottom-0 h-[2.5px] bg-accent transition-[left,width] duration-300 ease-out motion-reduce:transition-none"
+              style={{
+                left: `${underlineLeft}%`,
+                width: `${underlineWidth}%`,
+              }}
+              aria-hidden
+            />
+          ) : null}
         </div>
 
         <main
           className={cn(
-            "min-h-0 flex-1 overflow-y-auto",
+            "scroll-thin min-h-0 flex-1 overflow-y-auto",
             embedded &&
               "pb-[calc(92px+env(safe-area-inset-bottom,0px))] md:pb-4",
           )}
@@ -1636,7 +1749,13 @@ export function ConvoPage({
                           `/app/moments?user=${encodeURIComponent(username)}`,
                         )
                       }
-                      onOpenSpark={() => navigate("/app/sparks")}
+                      onOpenSpark={() =>
+                        onOpenSpark?.(
+                          thread,
+                          sparkByThread.get(thread.id) ?? null,
+                          sparks.data?.wallet.balance,
+                        )
+                      }
                     />
                   </Fragment>
                 );

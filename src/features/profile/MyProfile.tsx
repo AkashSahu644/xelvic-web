@@ -17,24 +17,26 @@ import {
   Settings,
   UserRound,
 } from "lucide-react";
-import { Backdrop } from "@/components/Backdrop";
-import { AuthedImage } from "@/components/Media";
-import { ConfirmDialog, Modal } from "@/components/Modal";
-import { PrivacyConfirm } from "@/components/PrivacyConfirm";
-import { VerifiedTick } from "@/components/Tick";
+import { Backdrop } from "@/components/layout/Backdrop";
+import { AuthedImage } from "@/components/media/Media";
+import { ConfirmDialog, Modal } from "@/components/overlays/Modal";
+import { PrivacyConfirm } from "@/components/overlays/PrivacyConfirm";
+import { VerifiedTick } from "@/components/icons/Tick";
 import { BirthdayFall } from "@/features/profile/BirthdayFall";
+import { isBirthdayTodayIn } from "@/features/profile/birthday";
 import { MemoriesShelf } from "@/features/profile/MemoriesShelf";
 import { PosedBio } from "@/features/profile/PosedBio";
 import { ProfileShelf } from "@/features/profile/ProfileShelf";
 import { Floating, FaceButton, FaceDialog, SheetRow, Stat } from "@/features/profile/parts";
 import { ProfessionalLead, ProfessionalPill, linkPillIcon } from "@/features/professional/parts";
 import { linkLabel } from "@/features/professional/model";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { useAuth } from "@/providers/AuthProvider";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import { useTheme } from "@/providers/ThemeProvider";
-import { useToast } from "@/providers/ToastProvider";
+import { sparksService } from "@/services/sparks.service";
+import { cn } from "@/utils/cn";
+import { useAuth } from "@/hooks/useAuth";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useTheme } from "@/hooks/useTheme";
+import { useToast } from "@/hooks/useToast";
+import { authService } from "@/services/auth.service";
 import type { Me } from "@/types/api";
 
 /**
@@ -95,7 +97,7 @@ export function MyProfile() {
    */
   const sparks = useQuery({
     queryKey: ["sparks"],
-    queryFn: () => api.get<{ total?: number }>("/sparks/"),
+    queryFn: () => sparksService.list(),
     enabled: Boolean(me?.id),
     retry: false,
   });
@@ -103,7 +105,7 @@ export function MyProfile() {
   const privateAccount = Boolean(me?.is_private);
   const handle = me?.username ?? "";
   const name = me?.name || handle;
-  const birthdayToday = Boolean(me?.birthday) && me?.birthday === todayMonthDay();
+  const birthdayToday = isBirthdayTodayIn(me);
 
   const trade = me?.is_company ? String(me?.category ?? "").trim() : "";
   const links = useMemo(() => me?.links ?? [], [me?.links]);
@@ -121,7 +123,7 @@ export function MyProfile() {
     if (privacyBusy) return;
     setPrivacyBusy(true);
     try {
-      const answer = await api.patch<Me>("/auth/me/privacy/", { is_private: going });
+      const answer = await authService.setPrivacy({ is_private: going });
       updateUser(answer);
       toast({
         title: going
@@ -371,6 +373,7 @@ export function MyProfile() {
           <MemoriesShelf
             username={handle}
             mine
+            author={user}
             onAdd={() => navigate("/app/moments?memories=1")}
           />
         </div>
@@ -460,10 +463,4 @@ export function MyProfile() {
       />
     </div>
   );
-}
-
-/** Today as `MM-DD`, which is the shape the server sends a birthday in. */
-function todayMonthDay(): string {
-  const now = new Date();
-  return `${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }

@@ -1,6 +1,6 @@
-import { AuthedImage } from "@/components/Media";
-import { cn } from "@/lib/cn";
-import { count } from "@/lib/format";
+import { AuthedImage } from "@/components/media/Media";
+import { cn } from "@/utils/cn";
+import { count } from "@/utils/format";
 
 /**
  * The numbers the players already reported about a clip of mine.
@@ -180,7 +180,7 @@ function Split({ watchers, kept, unkept }: { watchers: number; kept: number; unk
   }
   return (
     <div
-      className="mt-3 rounded-[16px] p-3.5"
+      className="mt-3 rounded-[18px] border border-line p-3.5"
       style={{ backgroundColor: "color-mix(in srgb, var(--ink) 5%, transparent)" }}
     >
       <p className="text-[10.5px] font-bold tracking-[0.3px] text-dim">Who watched</p>
@@ -254,7 +254,7 @@ function Head({ item }: { item: VibeStudioItem }) {
         src={item.thumbnail}
         alt={caption || "Clip"}
         loading="eager"
-        className="h-[100px] w-[76px] shrink-0 rounded-[14px] bg-surface-2"
+        className="h-[112px] w-[80px] shrink-0 rounded-[16px] bg-surface-2 object-cover"
       />
       <div className="min-w-0 flex-1">
         <p className="text-[16px] font-extrabold leading-tight tracking-[-0.2px]">

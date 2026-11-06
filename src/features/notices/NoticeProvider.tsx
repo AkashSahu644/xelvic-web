@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { usePreferences } from "@/providers/PreferencesProvider";
-import { useSocketEvent } from "@/providers/SocketProvider";
-import { normaliseAlert } from "@/features/alerts/useAlerts";
+import { usePreferences } from "@/hooks/usePreferences";
+import { useSocketEvent } from "@/hooks/useSocket";
+import { normaliseAlert } from "@/store/alerts";
 import { alertPath, alertSummary } from "@/features/alerts/model";
 import {
   noticeFrom,

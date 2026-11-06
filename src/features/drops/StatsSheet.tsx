@@ -2,14 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Eye, Heart, MessageCircle, Share2, StickyNote } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Modal } from "@/components/Modal";
-import { api } from "@/lib/api";
-import { count, relativeTime } from "@/lib/format";
-import { errorMessage } from "@/lib/errors";
-import type { Drop, UserCard } from "@/types/api";
+import { Avatar } from "@/components/ui/Avatar";
+import { Modal } from "@/components/overlays/Modal";
+import { dropsService } from "@/services/drops.service";
+import { count, relativeTime } from "@/utils/format";
+import { errorMessage } from "@/utils/errors";
+import type { Drop } from "@/types/api";
 import { dropBase, dropIsVibe } from "./model";
-import { VibeStudioRead, type VibeStudioDetail } from "./VibeStudio";
+import { VibeStudioRead } from "./VibeStudio";
 
 interface Stats {
   views: number;
@@ -18,16 +18,6 @@ interface Stats {
   notes: number;
   shares: number;
   share_targets: { where: string; target: string; count: number }[];
-}
-
-interface Audience {
-  of: string;
-  total: number;
-  crew: number;
-  others: number;
-  counts: Record<string, number>;
-  people: { person: UserCard; last: string; count: number; ms?: number }[];
-  next: string | null;
 }
 
 /**
@@ -71,7 +61,7 @@ export function StatsSheet({
   const studio = useQuery({
     queryKey: ["vibe-studio-item", drop.id],
     enabled: open && mine,
-    queryFn: () => api.get<VibeStudioDetail>(`/drops/vibes/studio/${drop.id}/`),
+    queryFn: () => dropsService.studioItem(drop.id),
   });
   const studioTrouble = studio.isError ? errorMessage(studio.error) : null;
 
@@ -80,8 +70,8 @@ export function StatsSheet({
     let live = true;
     setStats(null);
     setTrouble(null);
-    void api
-      .get<Stats>(`/${base}/${drop.id}/stats/`)
+    void dropsService
+      .stats<Stats>(base, drop.id)
       .then((answer) => {
         if (live) setStats(answer);
       })
@@ -234,9 +224,7 @@ function AudienceList({ drop, open }: { drop: Drop; open: boolean }) {
     enabled: open,
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) =>
-      api.get<Audience>(`/${base}/${drop.id}/audience/`, {
-        query: { of: "likes", before: pageParam ?? undefined },
-      }),
+      dropsService.audience(base, drop.id, pageParam ?? null),
     getNextPageParam: (last) => last.next,
   });
 

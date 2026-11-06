@@ -18,17 +18,29 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { ConfirmDialog, Modal } from "@/components/Modal";
-import { VerifiedTick } from "@/components/Tick";
+import { Avatar } from "@/components/ui/Avatar";
+import { ConfirmDialog, Modal } from "@/components/overlays/Modal";
+import { VerifiedTick } from "@/components/icons/Tick";
+import { PhotoEditor } from "@/features/camera/PhotoEditor";
+import { composeImage } from "@/features/camera/editorCanvas";
+import {
+  aspectValue,
+  defaultEditorDoc,
+  frameForMode,
+  type EditorDoc,
+} from "@/features/camera/editorTypes";
 import { SheetRow } from "@/features/profile/parts";
 import { SensitiveVeil } from "@/features/drops/SensitiveVeil";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { ApiError, errorMessage } from "@/lib/errors";
-import { count, timeAgoShort } from "@/lib/format";
-import { useAuth } from "@/providers/AuthProvider";
-import { useToast } from "@/providers/ToastProvider";
+import { cn } from "@/utils/cn";
+import { ApiError, errorMessage } from "@/utils/errors";
+import { count, timeAgoShort } from "@/utils/format";
+import { mediaBlob } from "@/utils/mediaCache";
+import { uploadAsset } from "@/utils/upload";
+import { lockScroll } from "@/utils/scrollLock";
+import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/useToast";
+import { chatService } from "@/services/chat.service";
+import { momentsService } from "@/services/moments.service";
 import { AddToMemories } from "./AddToMemories";
 import { MomentStage, isVideoItem } from "./MomentStage";
 import type {
@@ -39,7 +51,6 @@ import type {
   MomentPollVoters,
   MomentReactor,
   MomentReactions,
-  ThreadCard,
   UserCard,
 } from "@/types/api";
 
@@ -147,6 +158,18 @@ function momentCountLabel(value: number): string {
   return value === 1 ? "1 moment" : `${count(value)} moments`;
 }
 
+/**
+ * "Memory", or "12 in this Memory" — `momentViewMemory` and
+ * `momentViewInThisMemory`.
+ *
+ * A Memory is not counted in moments: it is a thing that has stopped being
+ * counted in days at all, so the line under the name says what it is rather
+ * than how much of it there is.
+ */
+function memoryCountLabel(value: number): string {
+  return value === 1 ? "Memory" : `${count(value)} in this Memory`;
+}
+
 /** "12 watched" — `_watchedCount`. */
 function watchedLabel(value: number): string {
   return value === 1 ? "1 watched" : `${count(value)} watched`;
@@ -215,6 +238,16 @@ export function MomentViewer({
   const [chosen, setChosen] = useState<string[]>([]);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [source, setSource] = useState<Moment | null>(null);
+  /**
+   * The carried picture, waiting to be drawn on before it is my day.
+   *
+   * `carryMoment` on the phone opens the same editor a fresh moment opens in
+   * and only what comes back out of it goes up — a remoment is no longer a
+   * silent server copy — so the URL here is an object URL of the bytes as they
+   * arrived, and `postCarried` is what turns the document into the picture that
+   * goes up.
+   */
+  const [seed, setSeed] = useState<{ url: string; aspect: string } | null>(null);
   const holdTimer = useRef<number | null>(null);
   const leaveTimer = useRef<number | null>(null);
   const elapsed = useRef(0);
@@ -234,6 +267,13 @@ export function MomentViewer({
   const item = frame?.item ?? null;
   const author = moment?.author ?? null;
   const mine = Boolean(moment && (moment.mine || (user && author?.id === user.id)));
+  /**
+   * Whether this walk is a Memory rather than somebody's day — the phone's
+   * `_memory`. Everything that differs hangs off this one flag: a Memory has
+   * nobody to count as a watcher, is never marked seen, cannot be kept in a
+   * Memory, is never carried, and answers at routes of its own.
+   */
+  const memory = Boolean(moment?.isMemory);
   const strip = useMemo(
     () => (moment ? frames.filter((row) => row.moment.id === moment.id) : []),
     [frames, moment],
@@ -257,7 +297,7 @@ export function MomentViewer({
 
   const threads = useQuery({
     queryKey: ["threads-aside"],
-    queryFn: () => api.get<{ threads: ThreadCard[] }>("/chat/threads/"),
+    queryFn: () => chatService.threads(),
     enabled: shareOpen,
     staleTime: 20_000,
   });
@@ -278,9 +318,11 @@ export function MomentViewer({
 
   /** Whether this piece names me, which is the whole of what a carry needs. */
   const named = useMemo(() => {
-    if (!item || !user) return false;
+    // A Memory is never carried. It is a shelf somebody keeps, not a day they
+    // put up, and there is no such thing as putting it on mine.
+    if (!item || !user || memory) return false;
     return (item.mentions ?? []).some((person) => String(person.id) === String(user.id));
-  }, [item, user]);
+  }, [item, user, memory]);
 
   const go = useCallback(
     (next: number) => {
@@ -311,6 +353,7 @@ export function MomentViewer({
     shareOpen ||
     confirmOpen ||
     soundHeld ||
+    Boolean(seed) ||
     Boolean(source);
 
   useEffect(() => {
@@ -323,12 +366,16 @@ export function MomentViewer({
   // What is watched, said as it is watched: the piece, and the day once its last
   // piece has been reached. The day's own answers ride along on the payload, so
   // nothing is asked for here that the reader did not already have.
+  //
+  // A Memory is never marked seen, either way round: it is a shelf on a profile
+  // rather than a day that goes out, so there is nothing for a watch to mean and
+  // `/seen/` would 404 on it besides.
   useEffect(() => {
-    if (!frame) return;
-    void api.post(`/moments/items/${frame.item.id}/seen/`, {}).catch(() => undefined);
+    if (!frame || frame.moment.isMemory) return;
+    void momentsService.itemSeen(frame.item.id).catch(() => undefined);
     const last = frames.filter((row) => row.moment.id === frame.moment.id).at(-1);
     if (last?.item.id === frame.item.id) {
-      void api.post(`/moments/${frame.moment.id}/seen/`, {}).catch(() => undefined);
+      void momentsService.seen(frame.moment.id).catch(() => undefined);
     }
   }, [frame, frames]);
 
@@ -387,11 +434,13 @@ export function MomentViewer({
       }
     };
     document.addEventListener("keydown", onKey);
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    // Counted: this effect's dependencies move as the walk steps and as each
+    // sheet opens, so it re-runs on a screen that stays up — see
+    // `utils/scrollLock.ts`.
+    const releaseScroll = lockScroll();
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = previous;
+      releaseScroll();
     };
   }, [
     index,
@@ -415,15 +464,25 @@ export function MomentViewer({
     [],
   );
 
+  // The carried picture's bytes are an object URL this screen made, so the one
+  // that made it gives it back — when the editor closes, and when the viewer
+  // does.
+  useEffect(() => {
+    if (!seed) return;
+    const url = seed.url;
+    return () => URL.revokeObjectURL(url);
+  }, [seed]);
+
   /** Say a face about the moment. A blank one is the same button taking it back. */
   async function react(face: string) {
     if (!moment || mine || busy) return;
     setBusy(true);
     try {
-      const answer = await api.post<{ reactions: MomentReactions }>(
-        `/moments/${moment.id}/react/`,
-        { emoji: face },
-      );
+      // A Memory is answered at its own route — the moment one looks its subject
+      // up among live moments only and would 404 on a shelf.
+      const answer = memory
+        ? await momentsService.memoryReact(moment.id, face)
+        : await momentsService.react(moment.id, face);
       setReactions((current) => ({ ...current, [String(moment.id)]: answer.reactions }));
     } catch (error) {
       toast({ title: "That did not land", description: errorMessage(error), tone: "error" });
@@ -439,7 +498,9 @@ export function MomentViewer({
     if (!body || !moment || busy || mine) return;
     setBusy(true);
     try {
-      await api.post(`/moments/${moment.id}/reply/`, { body });
+      await (memory
+        ? momentsService.memoryReply(moment.id, body)
+        : momentsService.reply(moment.id, body));
       setReply("");
       setTyping(false);
       setHeld(false);
@@ -453,10 +514,42 @@ export function MomentViewer({
 
   /** Put somebody else's moment up as mine — the permission is the whole of it. */
   async function carry() {
+    if (!moment || busy || memory) return;
+    const asset = item?.asset ?? null;
+    // Only a picture goes through the editor. A clip, a note, a Vibe, or a
+    // piece with no picture at all has nothing to draw on, so those carry the
+    // old way — a straight server copy — and the credit and the card the
+    // author is sent are the same either way. See `carryMoment`.
+    if (!item || !asset || isVideoItem(item) || isTextItem(item)) {
+      await carryPlain();
+      return;
+    }
+    setBusy(true);
+    try {
+      // The bytes rather than the address: the editor draws the picture in a
+      // canvas, and a private file read through an element would arrive
+      // without the account's own credentials.
+      const blob = await mediaBlob(asset.content_url ?? "");
+      const file = new File([blob], "carried.jpg", { type: blob.type || "image/jpeg" });
+      const width = asset.width ?? 0;
+      const height = asset.height ?? 0;
+      setSeed({
+        url: URL.createObjectURL(file),
+        aspect: width > 0 && height > 0 ? `${width}/${height}` : "4/5",
+      });
+    } catch (error) {
+      toast({ title: "That picture would not open", description: errorMessage(error), tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** The straight server copy, for everything the editor has nothing to draw on. */
+  async function carryPlain() {
     if (!moment || busy) return;
     setBusy(true);
     try {
-      await api.post(`/moments/${moment.id}/carry/`, {});
+      await momentsService.carry(moment.id);
       onChanged();
       toast({ title: "It is on your moment now.", tone: "success" });
     } catch (error) {
@@ -466,16 +559,76 @@ export function MomentViewer({
     }
   }
 
+  /**
+   * What came back out of the editor, put up as my own moment.
+   *
+   * The body is the ordinary post with one extra id: `source` is what makes the
+   * server credit the original, send them the Remention card, and refuse a
+   * second carry of the same thing. The mentions are the editor's own list
+   * minus me — the picture came to me *because* it named me, and the server
+   * refuses a moment that puts you in it yourself (`cannot_mention_yourself`).
+   */
+  async function postCarried(doc: EditorDoc) {
+    if (!moment || !seed || busy) return;
+    setBusy(true);
+    try {
+      const blob = await composeImage({ url: seed.url, doc, aspect: aspectValue(seed.aspect) });
+      if (!blob) {
+        toast({ title: "That picture would not open", tone: "error" });
+        return;
+      }
+      const asset = await uploadAsset(new File([blob], "moment.jpg", { type: "image/jpeg" }), {
+        kind: "image",
+      });
+      const me = user?.id ? String(user.id) : "";
+      await momentsService.post({
+        items: [
+          {
+            kind: "image",
+            asset: asset.id,
+            body: "",
+            mentions: doc.people.map((person) => String(person.id)).filter((id) => id !== me),
+          },
+        ],
+        source: moment.id,
+      });
+      setSeed(null);
+      onChanged();
+      toast({ title: "It is on your moment now.", tone: "success" });
+    } catch (error) {
+      toast({ title: "That did not go up", description: errorMessage(error), tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Take my own moment down — or, when it is a Memory, take the shelf off my
+   * profile.
+   *
+   * The two are not the same deed and do not say the same thing. Taking a
+   * moment down destroys it for everybody; removing a Memory only takes the
+   * shelf away, and the moments it was made of stay exactly where they were.
+   * The question says which of the two is about to happen.
+   */
   async function takeDown() {
     if (!moment) return;
     setBusy(true);
     try {
-      await api.delete(`/moments/${moment.id}/`);
+      if (memory) {
+        await momentsService.dropMemory(moment.id);
+      } else {
+        await momentsService.remove(moment.id);
+      }
       onChanged();
-      toast({ title: "Moment taken down", tone: "success" });
+      toast({ title: memory ? "Memory removed" : "Moment taken down", tone: "success" });
       onClose();
     } catch (error) {
-      toast({ title: "Could not take that down", description: errorMessage(error), tone: "error" });
+      toast({
+        title: memory ? "Could not remove that Memory" : "Could not take that down",
+        description: errorMessage(error),
+        tone: "error",
+      });
     } finally {
       setBusy(false);
       setConfirmOpen(false);
@@ -491,6 +644,10 @@ export function MomentViewer({
    * are read when the sheet is opened rather than when the moment came up: a
    * walk read through would otherwise be a request per day for a list nobody
    * looked at. An answer already in hand is not asked for twice.
+   *
+   * A Memory has no watchers to list — it is a shelf on a profile and not a day
+   * that goes out — so nothing is asked for its viewers, and its answers come
+   * from its own route.
    */
   async function openWho() {
     if (!moment || whoOpen) return;
@@ -499,16 +656,18 @@ export function MomentViewer({
     setWhoLoading(true);
     try {
       const [seen, faces, choices] = await Promise.all([
-        watchers[id]
-          ? Promise.resolve({ viewers: watchers[id], count: watchedCount[id] })
-          : api.get<{ viewers: UserCard[]; count?: number }>(`/moments/${id}/viewers/`),
+        memory || watchers[id]
+          ? Promise.resolve({ viewers: watchers[id] ?? [], count: watchedCount[id] })
+          : momentsService.viewers(id),
         answers[id]
           ? Promise.resolve({ reactors: answers[id], count: answers[id].length })
-          : api.get<{ reactors: MomentReactor[]; count?: number }>(`/moments/${id}/reactors/`),
+          : memory
+            ? momentsService.memoryReactors(id)
+            : momentsService.reactors(id),
         pollItem
           ? votes[String(pollItem.id)]
             ? Promise.resolve({ options: votes[String(pollItem.id)] })
-            : api.get<{ options: MomentPollVoters[] }>(`/moments/items/${pollItem.id}/voters/`)
+            : momentsService.voters(pollItem.id)
           : Promise.resolve({ options: [] as MomentPollVoters[] }),
       ]);
       setWatchers((current) => ({ ...current, [id]: seen.viewers ?? [] }));
@@ -540,7 +699,9 @@ export function MomentViewer({
     if (!moment || busy) return;
     setBusy(true);
     try {
-      const gate = await api.post<{ allowed?: boolean }>(`/moments/${moment.id}/share/`, {});
+      const gate = memory
+        ? await momentsService.memoryShareGate(moment.id)
+        : await momentsService.shareGate(moment.id);
       if (gate.allowed === false) {
         toast({ title: "This moment stays in the app.", tone: "error" });
         return;
@@ -561,7 +722,9 @@ export function MomentViewer({
     let sent = 0;
     for (const thread of chosen) {
       try {
-        await api.post(`/moments/${moment.id}/share/`, { thread });
+        await (memory
+          ? momentsService.memoryShare(moment.id, thread)
+          : momentsService.share(moment.id, thread));
         sent += 1;
       } catch {
         // Counted out below rather than swallowed: the number said afterwards is
@@ -612,7 +775,7 @@ export function MomentViewer({
     }
     setBusy(true);
     try {
-      const answer = await api.get<{ moment: Moment }>(`/moments/${carried.id}/`);
+      const answer = await momentsService.detail(carried.id);
       setSource(answer.moment);
     } catch (error) {
       toast({
@@ -749,11 +912,16 @@ export function MomentViewer({
             <Avatar user={author} size={36} />
             <span className="min-w-0">
               <span className="block truncate text-[15px] font-bold" style={OVER_MEDIA}>
-                Your moments
+                {memory ? "Your Memory" : "Your moments"}
               </span>
               {moment.credit ? <CreditLine credit={moment.credit} /> : null}
               <span className="block truncate text-[12px] text-white/70" style={OVER_MEDIA}>
-                {[momentCountLabel(strip.length), when].filter(Boolean).join(" · ")}
+                {[
+                  memory ? memoryCountLabel(strip.length) : momentCountLabel(strip.length),
+                  when,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </span>
             </span>
           </span>
@@ -774,7 +942,12 @@ export function MomentViewer({
               </span>
               {moment.credit ? <CreditLine credit={moment.credit} /> : null}
               <span className="block truncate text-[12px] text-white/70" style={OVER_MEDIA}>
-                {[momentCountLabel(strip.length), when].filter(Boolean).join(" · ")}
+                {[
+                  memory ? memoryCountLabel(strip.length) : momentCountLabel(strip.length),
+                  when,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </span>
             </span>
           </Link>
@@ -799,7 +972,9 @@ export function MomentViewer({
             <Repeat className="size-[22px]" aria-hidden />
           </HeaderButton>
         ) : null}
-        {mine && strip.length ? (
+        {/* Never offered over a Memory: the one row behind it is "Add to
+            Memories", and it already is one. */}
+        {mine && !memory && strip.length ? (
           <HeaderButton label="More" onClick={() => setOptionsOpen(true)}>
             <MoreVertical className="size-[22px]" aria-hidden />
           </HeaderButton>
@@ -830,6 +1005,11 @@ export function MomentViewer({
 
         {mine ? (
           <div className="pointer-events-auto flex flex-col items-stretch">
+            {/* A Memory gets the shorter row, and it is shorter because the
+                missing button has no meaning over one: there is nobody to count
+                as a watcher, so the eye and its number are not drawn. What is
+                left is the answers, read the same way, and the one deed that
+                still means something — taking it off the shelf. */}
             {reaction && reaction.count > 0 ? (
               <button
                 type="button"
@@ -845,16 +1025,23 @@ export function MomentViewer({
               </button>
             ) : null}
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void openWho()}
-                className="flex min-h-[42px] flex-1 items-center gap-2 rounded-[22px] px-3 text-left text-[14px] font-semibold"
-                style={{ backgroundColor: CONTROL_FILL }}
+              {memory ? (
+                <span className="flex-1" />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void openWho()}
+                  className="flex min-h-[42px] flex-1 items-center gap-2 rounded-[22px] px-3 text-left text-[14px] font-semibold"
+                  style={{ backgroundColor: CONTROL_FILL }}
+                >
+                  <Eye className="size-[18px]" aria-hidden />
+                  {watchedLabel(watched)}
+                </button>
+              )}
+              <RoundButton
+                label={memory ? "Remove" : "Take down"}
+                onClick={() => setConfirmOpen(true)}
               >
-                <Eye className="size-[18px]" aria-hidden />
-                {watchedLabel(watched)}
-              </button>
-              <RoundButton label="Take down" onClick={() => setConfirmOpen(true)}>
                 <Trash2 className="size-5" aria-hidden />
               </RoundButton>
             </div>
@@ -980,7 +1167,7 @@ export function MomentViewer({
       <Modal
         open={whoOpen}
         onClose={() => setWhoOpen(false)}
-        title="Who watched and answered"
+        title={memory ? "Who answered" : "Who watched and answered"}
         size="md"
       >
         {whoLoading ? (
@@ -996,7 +1183,7 @@ export function MomentViewer({
           <div className="px-4 py-12 text-center">
             <p className="text-[13.5px] font-bold">Nobody yet</p>
             <p className="mt-1 text-[12.5px] text-dim">
-              {pollItem
+              {memory || pollItem
                 ? "Whoever answers turns up here."
                 : "Whoever watches or answers turns up here."}
             </p>
@@ -1143,13 +1330,38 @@ export function MomentViewer({
         open={confirmOpen}
         onClose={() => setConfirmOpen(false)}
         onConfirm={() => void takeDown()}
-        title="Take this down?"
-        body="It goes for everybody, now, and there is no getting it back."
-        confirmLabel="Take down"
+        title={memory ? "Remove this Memory?" : "Take this down?"}
+        body={
+          memory
+            ? "It comes off your profile. The moments in it stay where they are."
+            : "It goes for everybody, now, and there is no getting it back."
+        }
+        confirmLabel={memory ? "Remove" : "Take down"}
         destructive
         loading={busy}
         icon={<Trash2 className="size-4" aria-hidden />}
       />
+
+      {/* The carried picture, opened in the editor a fresh moment opens in —
+          seeded with the people it named, so the pills it arrived with are
+          still on it when it goes up. */}
+      {seed ? (
+        <PhotoEditor
+          shot={{ url: seed.url, kind: "image" }}
+          mode="moment"
+          shotAspect={seed.aspect}
+          initialDoc={{
+            ...defaultEditorDoc(frameForMode("moment", seed.aspect)),
+            people: (item?.mentions ?? []).filter(
+              (person) => !user?.id || String(person.id) !== String(user.id),
+            ),
+          }}
+          posting={busy}
+          onCancel={() => setSeed(null)}
+          onDone={() => setSeed(null)}
+          onPost={(doc) => void postCarried(doc)}
+        />
+      ) : null}
 
       {/* A moment made from another one opens as a walk of its own, the way the
           app pushes it: it was reached from a thing that names it, so what is

@@ -1,16 +1,15 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
-import { WS_ORIGIN } from "@/lib/env";
-import { session } from "@/lib/session";
-import { useAuth } from "@/providers/AuthProvider";
+import { SocketContext } from "@/context/socket";
+import { WS_ORIGIN } from "@/config/env";
+import { session } from "@/store/session";
+import { useAuth } from "@/hooks/useAuth";
 
 export type SocketStatus = "offline" | "connecting" | "live" | "reconnecting";
 
@@ -23,13 +22,11 @@ export interface SocketFrame {
 
 type Listener = (frame: SocketFrame) => void;
 
-interface SocketContextValue {
+export interface SocketContextValue {
   status: SocketStatus;
   send: (action: Record<string, unknown>) => boolean;
   subscribe: (listener: Listener) => () => void;
 }
-
-const SocketContext = createContext<SocketContextValue | null>(null);
 
 export function SocketProvider({ children }: { children: ReactNode }) {
   const { status: authStatus } = useAuth();
@@ -113,8 +110,38 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   }, [authStatus]);
 
   useEffect(() => {
-    if (authStatus === "authenticated") connect();
+    if (authStatus !== "authenticated") return;
+
+    /**
+     * The socket is opened once the page has settled, not before.
+     *
+     * A websocket handshake is a second connection to the same origin and it
+     * used to be asked for at the same instant as the page's first reads —
+     * competing for the connection pool, for TLS work and for the browser's
+     * single-threaded start-up, precisely while somebody is waiting to see
+     * their feed. Nothing is lost by waiting: every surface that listens here
+     * also reads its data on mount, so the first page is complete before the
+     * first frame can arrive. Real-time still means real-time — it just starts
+     * a beat after the content rather than in front of it.
+     */
+    let cancelled = false;
+    const open = () => {
+      if (cancelled || socketRef.current) return;
+      connect();
+    };
+
+    let idleId: number | null = null;
+    let timer = 0;
+    if (typeof window.requestIdleCallback === "function") {
+      idleId = window.requestIdleCallback(open, { timeout: 1500 });
+    } else {
+      timer = window.setTimeout(open, 600);
+    }
+
     return () => {
+      cancelled = true;
+      if (idleId !== null) window.cancelIdleCallback(idleId);
+      window.clearTimeout(timer);
       closedByUs.current = true;
       clearTimers();
       socketRef.current?.close();
@@ -147,21 +174,3 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   return <SocketContext.Provider value={value}>{children}</SocketContext.Provider>;
 }
 
-export function useSocket() {
-  const context = useContext(SocketContext);
-  if (!context) throw new Error("useSocket must be used inside SocketProvider");
-  return context;
-}
-
-export function useSocketEvent(events: string[], handler: (frame: SocketFrame) => void) {
-  const { subscribe } = useSocket();
-  const handlerRef = useRef(handler);
-  handlerRef.current = handler;
-  useEffect(() => {
-    if (!events.length) return;
-    return subscribe((frame) => {
-      if (frame.event && events.includes(frame.event)) handlerRef.current(frame);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subscribe, events.join("|")]);
-}

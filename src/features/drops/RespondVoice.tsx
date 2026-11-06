@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Mic, Square } from "lucide-react";
-import { Modal } from "@/components/Modal";
-import { cn } from "@/lib/cn";
-import { duration } from "@/lib/format";
+import { Modal } from "@/components/overlays/Modal";
+import { cn } from "@/utils/cn";
+import { duration } from "@/utils/format";
 
 /**
  * Recording the voice note a respond carries.

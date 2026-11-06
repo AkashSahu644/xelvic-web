@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ImagePlus, LoaderCircle, Plus } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AuthedImage } from "@/components/Media";
-import { Modal } from "@/components/Modal";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { errorMessage } from "@/lib/errors";
-import { uploadAsset } from "@/lib/upload";
-import { useToast } from "@/providers/ToastProvider";
+import { AuthedImage } from "@/components/media/Media";
+import { Modal } from "@/components/overlays/Modal";
+import { cn } from "@/utils/cn";
+import { errorMessage } from "@/utils/errors";
+import { uploadAsset } from "@/utils/upload";
+import { useToast } from "@/hooks/useToast";
+import { momentsService } from "@/services/moments.service";
 import type { Memory, Moment, MomentItem } from "@/types/api";
 
 /**
@@ -33,13 +33,12 @@ export function pickStill(item: MomentItem): string | null {
   return asset?.thumbnail_url || asset?.content_url || null;
 }
 
-type AwaitingItem = MomentItem & { moment?: string };
-
 export function AddToMemories({
   open,
   onClose,
   onDone,
   moment,
+  into,
 }: {
   open: boolean;
   onClose: () => void;
@@ -50,6 +49,14 @@ export function AddToMemories({
    * "New" card on my own shelf opens, and what the app's own file does.
    */
   moment?: Moment | null;
+  /**
+   * The shelf more is being added to, from the long press on my own shelf.
+   *
+   * With one named the choosing is the whole flow: the picker, then the moments
+   * go straight into that shelf and "which Memory" is not asked, because the
+   * answer was the finger that opened this. See `AddToMemoriesScreen(into:)`.
+   */
+  into?: Memory | null;
 }) {
   const [step, setStep] = useState<"pick" | "where" | "name">(moment ? "where" : "pick");
   const [picks, setPicks] = useState<string[]>([]);
@@ -64,14 +71,14 @@ export function AddToMemories({
 
   const awaiting = useQuery({
     queryKey: ["moments-awaiting"],
-    queryFn: () => api.get<{ items: AwaitingItem[]; count: number }>("/moments/awaiting/"),
+    queryFn: () => momentsService.awaiting(),
     enabled: open && !moment,
     staleTime: 30_000,
   });
 
   const shelf = useQuery({
     queryKey: ["my-memories"],
-    queryFn: () => api.get<{ memories: Memory[] }>("/moments/memories/"),
+    queryFn: () => momentsService.memories(),
     enabled: open,
     staleTime: 15_000,
   });
@@ -134,7 +141,7 @@ export function AddToMemories({
         coverUpload = String(asset.id);
       }
       setStage("Keeping it...");
-      await api.post("/moments/memories/", {
+      await momentsService.createMemory({
         title: name,
         items: picks,
         ...(coverUpload ? { cover_upload: coverUpload } : coverItem ? { cover: coverItem } : {}),
@@ -155,7 +162,7 @@ export function AddToMemories({
     if (!picks.length) return;
     setBusy(true);
     try {
-      await api.patch(`/moments/memories/${memory.id}/`, { items: picks });
+      await momentsService.editMemory(memory.id, { items: picks });
       refreshShelf();
       toast({ title: `Added to “${memory.title}”`, tone: "success" });
       onClose();
@@ -187,14 +194,25 @@ export function AddToMemories({
             <span className="text-[11.5px] text-dim">
               {picks.length ? `${picks.length} picked` : "Nothing picked yet"}
             </span>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={!picks.length}
-              onClick={() => setStep("where")}
-            >
-              Next
-            </button>
+            {into ? (
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={!picks.length || busy}
+                onClick={() => void addTo(into)}
+              >
+                {busy ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : null} Add
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={!picks.length}
+                onClick={() => setStep("where")}
+              >
+                Next
+              </button>
+            )}
           </div>
         ) : step === "name" ? (
           <div className="flex items-center justify-between gap-3">

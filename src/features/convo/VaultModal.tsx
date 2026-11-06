@@ -13,15 +13,15 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Spinner } from "@/components/Button";
-import { ConfirmDialog, Modal } from "@/components/Modal";
-import { EmptyState, ErrorState } from "@/components/States";
-import { api, request } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { ApiError, errorMessage } from "@/lib/errors";
-import { useToast } from "@/providers/ToastProvider";
-import type { ThreadCard, VaultState } from "@/types/api";
+import { Avatar } from "@/components/ui/Avatar";
+import { Spinner } from "@/components/ui/Button";
+import { ConfirmDialog, Modal } from "@/components/overlays/Modal";
+import { EmptyState, ErrorState } from "@/components/ui/States";
+import { cn } from "@/utils/cn";
+import { ApiError, errorMessage } from "@/utils/errors";
+import { useToast } from "@/hooks/useToast";
+import { chatService } from "@/services/chat.service";
+import type { ThreadCard } from "@/types/api";
 import { ConvoSheet } from "./ConvoSheet";
 import { stamp, threadTitle } from "./model";
 
@@ -211,7 +211,7 @@ export function VaultModal({
 
   const stateQuery = useQuery({
     queryKey: ["vault"],
-    queryFn: () => api.get<VaultState>("/chat/vault/"),
+    queryFn: () => chatService.vaultState(),
     enabled: open,
     staleTime: 0,
   });
@@ -233,7 +233,7 @@ export function VaultModal({
 
   const rowsQuery = useQuery({
     queryKey: ["vault-rows"],
-    queryFn: () => api.get<{ threads: ThreadCard[] }>("/chat/threads/", { query: { vault: "1" } }),
+    queryFn: () => chatService.threads({ vault: true }),
     enabled: open && isOpen,
     staleTime: 0,
   });
@@ -259,7 +259,7 @@ export function VaultModal({
     setBusy("unlock");
     setError(null);
     try {
-      await api.post("/chat/vault/unlock/", { code });
+      await chatService.vaultUnlock(code);
       setUnlocked(true);
       invalidate();
       toast({ title: "Vault open.", tone: "success" });
@@ -277,7 +277,7 @@ export function VaultModal({
   async function lockNow() {
     setBusy("lock");
     try {
-      await api.delete("/chat/vault/unlock/");
+      await chatService.vaultLock();
       setUnlocked(false);
       setView("main");
       invalidate();
@@ -307,10 +307,7 @@ export function VaultModal({
     setBusy("code");
     setError(null);
     try {
-      await api.put("/chat/vault/", {
-        code: next,
-        ...(state?.code_set ? { current } : {}),
-      });
+      await chatService.vaultSetCode(next, state?.code_set ? current : undefined);
       setUnlocked(true);
       setPrompt(null);
       setView("main");
@@ -328,7 +325,7 @@ export function VaultModal({
     setBusy("remove");
     setError(null);
     try {
-      await request("/chat/vault/", { method: "DELETE", body: { code } });
+      await chatService.vaultRemoveCode(code);
       setUnlocked(true);
       setConfirmRemove(false);
       setPrompt(null);
@@ -351,7 +348,7 @@ export function VaultModal({
     }
     setBusy("hide");
     try {
-      const response = await api.patch<VaultState>("/chat/vault/", { hide });
+      const response = await chatService.vaultHide(hide);
       queryClient.setQueryData(["vault"], { ...state, ...response });
       invalidate();
       toast({
@@ -369,7 +366,7 @@ export function VaultModal({
     if (busy) return;
     setBusy(thread.id);
     try {
-      await api.patch(`/chat/threads/${thread.id}/flags/`, { vaulted: false });
+      await chatService.flags(thread.id, { vaulted: false });
       invalidate();
       toast({ title: `${threadTitle(thread)} is back in the convo list.`, tone: "success" });
     } catch (caught) {

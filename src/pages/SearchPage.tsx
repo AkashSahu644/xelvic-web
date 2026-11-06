@@ -2,14 +2,17 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Headphones, Lock, Search, UserRound, X } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { EmptyState, ErrorState } from "@/components/States";
+import { Avatar } from "@/components/ui/Avatar";
+import { EmptyState, ErrorState } from "@/components/ui/States";
 import { TrackRow } from "@/features/audio/TrackRow";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import type { Page, Track, UserCard } from "@/types/api";
+import { useLiveRings } from "@/hooks/useLiveRings";
+import { cn } from "@/utils/cn";
+import { audioService } from "@/services/audio.service";
+import { authService } from "@/services/auth.service";
+import { STORAGE_KEYS } from "@/constants/storage";
+import type { Track, UserCard } from "@/types/api";
 
-const RECENT_KEY = "xelvic.searches";
+const RECENT_KEY = STORAGE_KEYS.recentSearches;
 
 function readRecent(): string[] {
   try {
@@ -21,9 +24,12 @@ function readRecent(): string[] {
 }
 
 function PersonRow({ person, onPick }: { person: UserCard; onPick: () => void }) {
+  // A face in the results wears the ring when their day is still unwatched,
+  // exactly as it does on the feed and on their own page.
+  const live = useLiveRings();
   return (
     <Link to={`/app/u/${person.username}`} onClick={onPick} className="flex items-center gap-3 rounded-[13px] px-2 py-2.5 transition hover:bg-[color-mix(in_srgb,var(--ink)_5%,transparent)]">
-      <Avatar user={person} size={42} online={person.online} />
+      <Avatar user={person} size={42} online={person.online} ring={live.has(String(person.id))} />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <span className="truncate text-[12px] font-extrabold">{person.name || person.username}</span>
@@ -47,19 +53,19 @@ export function SearchPage() {
 
   const people = useQuery({
     queryKey: ["search-people", q],
-    queryFn: () => api.get<Page<UserCard>>(`/auth/users/search/?q=${encodeURIComponent(q)}`),
+    queryFn: () => authService.searchUsers(q),
     enabled: q.trim().length > 0,
     staleTime: 30_000,
   });
   const tracks = useQuery({
     queryKey: ["search-tracks", q],
-    queryFn: () => api.get<{ tracks: Track[]; query: string }>(`/audio/tracks/?q=${encodeURIComponent(q)}`),
+    queryFn: () => audioService.tracks({ q }) as Promise<{ tracks: Track[]; query: string }>,
     enabled: tab === "audio" && q.trim().length > 0,
     staleTime: 30_000,
   });
   const suggestions = useQuery({
     queryKey: ["search-people", ""],
-    queryFn: () => api.get<Page<UserCard>>("/auth/users/search/"),
+    queryFn: () => authService.searchUsers(),
     enabled: !q.trim(),
     staleTime: 60_000,
   });

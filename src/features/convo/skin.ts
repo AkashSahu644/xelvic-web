@@ -8,14 +8,61 @@ export const CONVO_WASH = 0.20;
 export const CONVO_EDGE = 0.30;
 export const CONVO_DIM_ALPHA = 0.78;
 
+/**
+ * The tint swatches, in the phone's own light-scheme readings.
+ *
+ * `kTints` in `app/lib/skin.dart`, value for value. The server's catalogue
+ * carries the dark scheme's hexes (`#22d3ee` and friends), and those are the
+ * wrong readings on a white page: `#22d3ee` on white is a 1.7 contrast ratio,
+ * so a name in it is a smudge and a solid button swallows its own white arrow.
+ * The phone writes each key down at the same hue, taken down to where white
+ * sits on it at 4.5 or better, and the picker shows that one because a picker
+ * showing a colour the chat then does not use is lying about what the tap does.
+ *
+ * `default` is the app's own pink (`kChatTint`), not a key of its own — a chat
+ * that was never given a colour wears the app's, unless the theme named a
+ * `chatTint` of its own, which is why the picker's default swatch is the pink
+ * and the chat's own accent is `--convo-accent`.
+ */
 export const TINT_HEX: Record<string, string> = {
-  default: "#7c5cff",
-  cyan: "#22d3ee",
-  mint: "#34d399",
-  amber: "#ffb020",
-  rose: "#ff4d6d",
-  magenta: "#e879f9",
+  default: "#E31B66",
+  cyan: "#0E7C8C",
+  mint: "#0E7A4A",
+  amber: "#96590A",
+  rose: "#C42348",
+  magenta: "#9B2FAE",
 };
+
+/**
+ * The eight tones a person's name is written in, in the app's own order.
+ *
+ * `XTones.all` in `app/lib/theme.dart`. The colours themselves live in the
+ * stylesheet (`--tone-*`), which is where the dark-scheme readings are swapped
+ * for the light ones — the same switch the app makes in `nameTint` when it asks
+ * a tone for its `pill` instead of its `on`.
+ */
+export const NAME_TONES = ["pink", "red", "yellow", "green", "teal", "blue", "violet", "slate"] as const;
+
+/**
+ * Which tone a person's name is drawn in, from whatever identifies them.
+ *
+ * The app's `nameTint` (`app/lib/skin.dart`), hash for hash: FNV-1a over the
+ * seed's UTF-16 code units, masked to 32 bits, taken modulo the eight tones. The
+ * web used to invent its own palette of seven hexes here, which meant a name in
+ * a group was one colour on the phone and another on the page — and a name is
+ * the one thing in a group where the colour *is* the identity. An empty seed
+ * answers the app's own accent, which is what a card from nobody gets.
+ */
+export function nameTint(seed?: string | null): string {
+  const value = seed ?? "";
+  if (!value) return "var(--accent)";
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `var(--tone-${NAME_TONES[hash % NAME_TONES.length]})`;
+}
 
 export const FALLBACK_WALLS: ConvoWall[] = [
   { key: "default", name: "Default" },
@@ -47,7 +94,7 @@ export function wallUrl(key?: string | null): string | null {
 }
 
 export function tintHex(key?: string | null): string | null {
-  if (!key || key === "default") return null;
+  if (!key) return null;
   return TINT_HEX[key] ?? null;
 }
 

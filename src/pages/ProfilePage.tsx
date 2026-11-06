@@ -1,5 +1,5 @@
 import { useParams } from "react-router-dom";
-import { useAuth } from "@/providers/AuthProvider";
+import { useAuth } from "@/hooks/useAuth";
 import { MyProfile } from "@/features/profile/MyProfile";
 import { PersonProfile } from "@/features/profile/PersonProfile";
 

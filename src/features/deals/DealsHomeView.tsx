@@ -1,16 +1,16 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Handshake, ListFilter, Plus } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Button, Spinner } from "@/components/Button";
-import { PageHeader } from "@/components/Page";
-import { EmptyState } from "@/components/States";
-import { useAuth } from "@/providers/AuthProvider";
-import { cn } from "@/lib/cn";
+import { Avatar } from "@/components/ui/Avatar";
+import { Button, Spinner } from "@/components/ui/Button";
+import { PageHeader } from "@/components/layout/Page";
+import { EmptyState } from "@/components/ui/States";
+import { useAuth } from "@/hooks/useAuth";
+import { cn } from "@/utils/cn";
 import type { Deal } from "@/types/api";
 import { counterpart, isClosed, money, stampLine } from "./model";
 import { DealRetry, GroupHeading, StatusChip, VerifiedTick } from "./parts";
-import { useDeals } from "./queries";
+import { useDeals } from "@/hooks/useDeals";
 
 /**
  * My paid collaborations, both sides of them on one screen.

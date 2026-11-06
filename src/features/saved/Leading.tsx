@@ -1,5 +1,5 @@
 import { Bookmark, type LucideIcon } from "lucide-react";
-import { AuthedImage } from "@/components/Media";
+import { AuthedImage } from "@/components/media/Media";
 import { CoverArt, seedOf, trackIsPodcast } from "@/features/audio/parts";
 import { cardOf, kindIcon } from "@/features/saved/model";
 import type { SavedThing } from "@/types/api";

@@ -12,14 +12,17 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { Avatar } from "@/components/Avatar";
-import { Button } from "@/components/Button";
-import { AuthedImage } from "@/components/Media";
-import { PageHeader } from "@/components/Page";
-import { EmptyState } from "@/components/States";
+import { Avatar } from "@/components/ui/Avatar";
+import { Button } from "@/components/ui/Button";
+import { AuthedImage } from "@/components/media/Media";
+import { PageHeader } from "@/components/layout/Page";
+import { EmptyState } from "@/components/ui/States";
 import { CameraCapture } from "@/features/camera/CameraCapture";
+import { CirclesSection } from "@/features/circles/CirclesSection";
+import { LiveNow } from "@/features/live/LiveNow";
 import { AddToMemories } from "@/features/moments/AddToMemories";
 import { ComposeMoment } from "@/features/moments/ComposeMoment";
+import { memoryAsMoment } from "@/features/moments/memory";
 import { MomentViewer } from "@/features/moments/MomentViewer";
 import { PollMoment } from "@/features/moments/PollMoment";
 import { ShareMoment, type MomentPick } from "@/features/moments/ShareMoment";
@@ -27,14 +30,14 @@ import { TextMoment } from "@/features/moments/TextMoment";
 import { momentRingFor, momentStill, railStill } from "@/features/moments/rail";
 import { FaceDialog, SheetRow } from "@/features/profile/parts";
 import { SensitiveVeil } from "@/features/drops/SensitiveVeil";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { errorMessage } from "@/lib/errors";
-import { useAuth } from "@/providers/AuthProvider";
-import { useTheme } from "@/providers/ThemeProvider";
-import { useToast } from "@/providers/ToastProvider";
-import { Modal } from "@/components/Modal";
-import type { Asset, Moment, MomentTray, TrayMoment, UserCard } from "@/types/api";
+import { cn } from "@/utils/cn";
+import { errorMessage } from "@/utils/errors";
+import { useAuth } from "@/hooks/useAuth";
+import { useTheme } from "@/hooks/useTheme";
+import { useToast } from "@/hooks/useToast";
+import { momentsService } from "@/services/moments.service";
+import { Modal } from "@/components/overlays/Modal";
+import type { Asset, Moment, TrayMoment, UserCard } from "@/types/api";
 
 /**
  * The Moments tab: the rail, and the three doors that put something on it.
@@ -313,13 +316,62 @@ export function MomentsPage() {
     );
   }, [params, setParams]);
 
+  // A row in Alerts that names a Memory lands here. A Memory has no by-id read
+  // of its own — the shelf is the only list the server offers — so the shelf is
+  // asked and the Memory it names is opened out of it, through the same
+  // `memoryAsMoment` the profile's shelf uses.
+  const memoryOpened = useRef("");
+  useEffect(() => {
+    const id = params.get("memory");
+    if (!id || memoryOpened.current === id) return;
+    memoryOpened.current = id;
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        next.delete("memory");
+        return next;
+      },
+      { replace: true },
+    );
+    setOpening(id);
+    void momentsService
+      .memories()
+      .then((response) => {
+        const memory = (response.memories ?? []).find((row) => String(row.id) === id);
+        if (!memory) {
+          toast({ title: "That Memory is no longer on your shelf", tone: "info" });
+          return;
+        }
+        // A Memory of a playlist is not a walk: it opens where that playlist is.
+        if (memory.playlist) {
+          navigate(`/app/audio/${encodeURIComponent(String(memory.playlist.id))}`);
+          return;
+        }
+        if (memory.sensitive && !memory.openable) {
+          toast({ title: "This is sensitive content you cannot open.", tone: "error" });
+          return;
+        }
+        if (!(memory.items ?? []).length) {
+          toast({ title: "There is nothing left on this shelf.", tone: "info" });
+          return;
+        }
+        setViewer({
+          moments: [memoryAsMoment(memory, user ?? null, true, user?.username ?? "")],
+        });
+      })
+      .catch((error) => {
+        toast({ title: "Could not open that Memory", description: errorMessage(error), tone: "error" });
+      })
+      .finally(() => setOpening(null));
+  }, [params, setParams, toast, navigate, user]);
+
   const tray = useQuery({
     queryKey: ["moments-tray"],
-    queryFn: () => api.get<MomentTray>("/moments/tray/"),
+    queryFn: () => momentsService.tray(),
   });
   const mine = useQuery({
     queryKey: ["moments-mine"],
-    queryFn: () => api.get<{ moments: Moment[]; total?: number; total_views?: number }>("/moments/mine/"),
+    queryFn: () => momentsService.mine(),
     select: (data) => data.moments ?? [],
   });
 
@@ -368,7 +420,7 @@ export function MomentsPage() {
     }
     setOpening(row.id);
     try {
-      const response = await api.get<{ moments: Moment[] }>(`/moments/users/${encodeURIComponent(username)}/`);
+      const response = await momentsService.byUser(username);
       if (!response.moments?.length) {
         toast({ title: "That moment has already gone", tone: "info" });
         void tray.refetch();
@@ -388,7 +440,7 @@ export function MomentsPage() {
     if (!author) return;
     const silent = !row.silenced;
     try {
-      await api.post("/moments/silence/", { user: author.id, silent });
+      await momentsService.silence(author.id, silent);
       toast({ title: silent ? `Muted @${author.username}` : `Unmuted @${author.username}`, tone: "success" });
       refreshMoments();
     } catch (error) {
@@ -410,14 +462,14 @@ export function MomentsPage() {
       { replace: true },
     );
     setOpening(id);
-    void api
-      .get<{ moment: Moment }>(`/moments/${encodeURIComponent(id)}/`)
+    void momentsService
+      .detail(id)
       .then(async (response) => {
         if (!response.moment) return;
         const author = response.moment.author?.username;
         if (author) {
           try {
-            const day = await api.get<{ moments: Moment[] }>(`/moments/users/${encodeURIComponent(author)}/`);
+            const day = await momentsService.byUser(author);
             if (day.moments?.length) {
               setViewer({ moments: day.moments, startId: id });
               return;
@@ -453,8 +505,8 @@ export function MomentsPage() {
       return;
     }
     setOpening(username);
-    void api
-      .get<{ moments: Moment[] }>(`/moments/users/${encodeURIComponent(username)}/`)
+    void momentsService
+      .byUser(username)
       .then((response) => {
         if (response.moments?.length) setViewer({ moments: response.moments, startId: row?.id });
         else toast({ title: "Nothing is up right now", tone: "info" });
@@ -527,6 +579,23 @@ export function MomentsPage() {
             className="py-12"
           />
         ) : null}
+
+        {/* Under the rail, in the place the app gives it: the one thing on this
+            page that is happening *now* — who this account keeps is on air. It
+            is the last thing the rail's column holds, so it scrolls away under
+            the rail rather than sitting beside it, and its header is always
+            drawn because that header is the way to start a room. */}
+        <LiveNow />
+
+        {/* The web's own door to circles, kept below the strip. The app puts
+            circles on their own shelf now, so this is the one place a web
+            reader can still reach them — the difference is recorded in the
+            parity notes rather than passed off as the app's layout. */}
+        {/* Under the rail, in the place the app's Moments page puts it: the
+            interests picked this month and the rooms they put me in. It is the
+            last child of the page's own column, so it scrolls away under the
+            rail rather than sitting beside it. */}
+        <CirclesSection />
       </div>
 
       {/* A hold on a face in the rail: the picture, the way to their page, and
